@@ -71,6 +71,22 @@ class SplitwisePWAApp(object):
         path = environ.get("PATH_INFO", "/") or "/"
         method = environ.get("REQUEST_METHOD", "GET").upper()
         session_id, session, session_cookie = self._get_session(environ)
+        headers = self._default_headers(session_cookie)
+
+        try:
+            status, payload, content_type = self._route_request(method, path, environ, session, session_id)
+            if content_type == "json":
+                return self._respond_json(start_response, status, payload, headers)
+            return self._respond(start_response, status, payload, headers, content_type)
+        except ValueError as exc:
+            return self._respond_json(start_response, "400 Bad Request", {"error": str(exc)}, headers)
+        except SplitwiseException as exc:
+            status = ERROR_STATUS.get(type(exc), "500 Internal Server Error")
+            return self._respond_json(start_response, status, {"error": str(exc)}, headers)
+        except Exception as exc:  # pragma: no cover - protective fallback
+            return self._respond_json(start_response, "500 Internal Server Error", {"error": str(exc)}, headers)
+
+    def _default_headers(self, session_cookie):
         headers = [
             ("X-Content-Type-Options", "nosniff"),
             ("Referrer-Policy", "same-origin"),
@@ -82,152 +98,171 @@ class SplitwisePWAApp(object):
         ]
         if session_cookie:
             headers.append(("Set-Cookie", session_cookie))
+        return headers
 
-        try:
-            if method == "GET" and path in STATIC_ROUTES:
-                content_type, body = STATIC_ROUTES[path]
-                return self._respond(start_response, "200 OK", body, headers, content_type)
+    def _route_request(self, method, path, environ, session, session_id):
+        if method == "GET":
+            return self._handle_get(path, session, session_id)
+        if method == "POST":
+            return self._handle_post(path, environ, session)
+        return "404 Not Found", {"error": "Route not found"}, "json"
 
-            if method == "GET" and path == "/api/config":
-                payload = {
-                    "configured": self._has_client_credentials(session),
-                    "sdk_methods": SDK_METHODS,
-                    "session": self._session_summary(session),
-                    "session_id": session_id,
-                }
-                return self._respond_json(start_response, "200 OK", payload, headers)
+    def _handle_get(self, path, session, session_id):
+        if path in STATIC_ROUTES:
+            content_type, body = STATIC_ROUTES[path]
+            return "200 OK", body, content_type
 
-            if method == "POST" and path == "/api/session":
-                payload = self._read_json(environ)
-                self._merge_session(session, payload)
-                return self._respond_json(
-                    start_response,
-                    "200 OK",
-                    {"ok": True, "session": self._session_summary(session)},
-                    headers,
-                )
+        if path == "/api/config":
+            return "200 OK", {
+                "configured": self._has_client_credentials(session),
+                "sdk_methods": SDK_METHODS,
+                "session": self._session_summary(session),
+                "session_id": session_id,
+            }, "json"
 
-            if method == "POST" and path == "/api/session/clear":
-                session.clear()
-                return self._respond_json(start_response, "200 OK", {"ok": True}, headers)
+        return "404 Not Found", {"error": "Route not found"}, "json"
 
-            if method == "POST" and path.startswith("/api/operations/"):
-                operation = path.rsplit("/", 1)[-1]
-                if operation not in SDK_METHODS:
-                    return self._respond_json(start_response, "404 Not Found", {"error": "Unknown operation"}, headers)
-                payload = self._read_json(environ)
-                result = self._dispatch_operation(operation, payload, session)
-                return self._respond_json(
-                    start_response,
-                    "200 OK",
-                    {"ok": True, "operation": operation, "data": result},
-                    headers,
-                )
+    def _handle_post(self, path, environ, session):
+        payload = self._read_json(environ)
+        if path == "/api/session":
+            self._merge_session(session, payload)
+            return "200 OK", {"ok": True, "session": self._session_summary(session)}, "json"
 
-            return self._respond_json(start_response, "404 Not Found", {"error": "Route not found"}, headers)
-        except ValueError as exc:
-            return self._respond_json(start_response, "400 Bad Request", {"error": str(exc)}, headers)
-        except SplitwiseException as exc:
-            status = ERROR_STATUS.get(type(exc), "500 Internal Server Error")
-            return self._respond_json(start_response, status, {"error": str(exc)}, headers)
-        except Exception as exc:  # pragma: no cover - protective fallback
-            return self._respond_json(start_response, "500 Internal Server Error", {"error": str(exc)}, headers)
+        if path == "/api/session/clear":
+            session.clear()
+            return "200 OK", {"ok": True}, "json"
+
+        if path.startswith("/api/operations/"):
+            operation = path.rsplit("/", 1)[-1]
+            if operation not in SDK_METHODS:
+                return "404 Not Found", {"error": "Unknown operation"}, "json"
+            return "200 OK", {
+                "ok": True,
+                "operation": operation,
+                "data": self._dispatch_operation(operation, payload, session),
+            }, "json"
+
+        return "404 Not Found", {"error": "Route not found"}, "json"
 
     def _dispatch_operation(self, operation, payload, session):
         client = self._build_client(session)
+        handlers = {
+            "getAuthorizeURL": self._op_get_authorize_url,
+            "getAccessToken": self._op_get_access_token,
+            "getOAuth2AuthorizeURL": self._op_get_oauth2_authorize_url,
+            "getOAuth2AccessToken": self._op_get_oauth2_access_token,
+            "getCurrentUser": self._op_get_current_user,
+            "getUser": self._op_get_user,
+            "updateUser": self._op_update_user,
+            "getFriends": self._op_get_friends,
+            "getGroups": self._op_get_groups,
+            "getGroup": self._op_get_group,
+            "createGroup": self._op_create_group,
+            "deleteGroup": self._op_delete_group,
+            "addUserToGroup": self._op_add_user_to_group,
+            "getExpenses": self._op_get_expenses,
+            "getExpense": self._op_get_expense,
+            "createExpense": self._op_create_expense,
+            "updateExpense": self._op_update_expense,
+            "deleteExpense": self._op_delete_expense,
+            "getCurrencies": self._op_get_currencies,
+            "getCategories": self._op_get_categories,
+            "getComments": self._op_get_comments,
+            "createComment": self._op_create_comment,
+            "getNotifications": self._op_get_notifications,
+        }
+        return handlers[operation](client, payload, session)
 
-        if operation == "getAuthorizeURL":
-            authorize_url, oauth_token_secret = client.getAuthorizeURL()
-            session["oauth_token_secret"] = oauth_token_secret
-            return {"authorize_url": authorize_url, "oauth_token_secret": oauth_token_secret}
+    def _op_get_authorize_url(self, client, payload, session):
+        authorize_url, oauth_token_secret = client.getAuthorizeURL()
+        session["oauth_token_secret"] = oauth_token_secret
+        return {"authorize_url": authorize_url, "oauth_token_secret": oauth_token_secret}
 
-        if operation == "getAccessToken":
-            oauth_token_secret = payload.get("oauth_token_secret") or session.get("oauth_token_secret")
-            if not oauth_token_secret:
-                raise ValueError("oauth_token_secret is required before exchanging an OAuth 1 verifier")
-            access_token = client.getAccessToken(payload["oauth_token"], oauth_token_secret, payload["oauth_verifier"])
-            session["access_token"] = access_token
-            return access_token
+    def _op_get_access_token(self, client, payload, session):
+        oauth_token_secret = payload.get("oauth_token_secret") or session.get("oauth_token_secret")
+        if not oauth_token_secret:
+            raise ValueError("oauth_token_secret is required before exchanging an OAuth 1 verifier")
+        access_token = client.getAccessToken(payload["oauth_token"], oauth_token_secret, payload["oauth_verifier"])
+        session["access_token"] = access_token
+        return access_token
 
-        if operation == "getOAuth2AuthorizeURL":
-            authorize_url, state = client.getOAuth2AuthorizeURL(payload["redirect_uri"], payload.get("state"))
-            session["oauth2_state"] = state
-            return {"authorize_url": authorize_url, "state": state}
+    def _op_get_oauth2_authorize_url(self, client, payload, session):
+        authorize_url, state = client.getOAuth2AuthorizeURL(payload["redirect_uri"], payload.get("state"))
+        session["oauth2_state"] = state
+        return {"authorize_url": authorize_url, "state": state}
 
-        if operation == "getOAuth2AccessToken":
-            access_token = client.getOAuth2AccessToken(payload["code"], payload["redirect_uri"])
-            session["oauth2_access_token"] = access_token
-            return access_token
+    def _op_get_oauth2_access_token(self, client, payload, session):
+        access_token = client.getOAuth2AccessToken(payload["code"], payload["redirect_uri"])
+        session["oauth2_access_token"] = access_token
+        return access_token
 
-        if operation == "getCurrentUser":
-            return self._serialize(client.getCurrentUser())
+    def _op_get_current_user(self, client, payload, session):
+        return self._serialize(client.getCurrentUser())
 
-        if operation == "getUser":
-            return self._serialize(client.getUser(payload["id"]))
+    def _op_get_user(self, client, payload, session):
+        return self._serialize(client.getUser(payload["id"]))
 
-        if operation == "updateUser":
-            user, errors = client.updateUser(self._build_user(payload.get("user", {})))
-            return {"user": self._serialize(user), "errors": self._serialize(errors)}
+    def _op_update_user(self, client, payload, session):
+        user, errors = client.updateUser(self._build_user(payload.get("user", {})))
+        return {"user": self._serialize(user), "errors": self._serialize(errors)}
 
-        if operation == "getFriends":
-            return self._serialize(client.getFriends())
+    def _op_get_friends(self, client, payload, session):
+        return self._serialize(client.getFriends())
 
-        if operation == "getGroups":
-            return self._serialize(client.getGroups())
+    def _op_get_groups(self, client, payload, session):
+        return self._serialize(client.getGroups())
 
-        if operation == "getGroup":
-            return self._serialize(client.getGroup(payload.get("id", 0)))
+    def _op_get_group(self, client, payload, session):
+        return self._serialize(client.getGroup(payload.get("id", 0)))
 
-        if operation == "createGroup":
-            group, errors = client.createGroup(self._build_group(payload.get("group", {})))
-            return {"group": self._serialize(group), "errors": self._serialize(errors)}
+    def _op_create_group(self, client, payload, session):
+        group, errors = client.createGroup(self._build_group(payload.get("group", {})))
+        return {"group": self._serialize(group), "errors": self._serialize(errors)}
 
-        if operation == "deleteGroup":
-            success, errors = client.deleteGroup(payload["id"])
-            return {"success": success, "errors": self._serialize(errors)}
+    def _op_delete_group(self, client, payload, session):
+        success, errors = client.deleteGroup(payload["id"])
+        return {"success": success, "errors": self._serialize(errors)}
 
-        if operation == "addUserToGroup":
-            success, user, errors = client.addUserToGroup(self._build_user(payload.get("user", {})), payload["group_id"])
-            return {"success": success, "user": self._serialize(user), "errors": self._serialize(errors)}
+    def _op_add_user_to_group(self, client, payload, session):
+        success, user, errors = client.addUserToGroup(self._build_user(payload.get("user", {})), payload["group_id"])
+        return {"success": success, "user": self._serialize(user), "errors": self._serialize(errors)}
 
-        if operation == "getExpenses":
-            filters = dict(payload)
-            if "visible" in filters:
-                filters["visible"] = bool(filters["visible"])
-            return self._serialize(client.getExpenses(**filters))
+    def _op_get_expenses(self, client, payload, session):
+        filters = dict(payload)
+        if "visible" in filters:
+            filters["visible"] = bool(filters["visible"])
+        return self._serialize(client.getExpenses(**filters))
 
-        if operation == "getExpense":
-            return self._serialize(client.getExpense(payload["id"]))
+    def _op_get_expense(self, client, payload, session):
+        return self._serialize(client.getExpense(payload["id"]))
 
-        if operation == "createExpense":
-            expense, errors = client.createExpense(self._build_expense(payload.get("expense", {})))
-            return {"expense": self._serialize(expense), "errors": self._serialize(errors)}
+    def _op_create_expense(self, client, payload, session):
+        expense, errors = client.createExpense(self._build_expense(payload.get("expense", {})))
+        return {"expense": self._serialize(expense), "errors": self._serialize(errors)}
 
-        if operation == "updateExpense":
-            expense, errors = client.updateExpense(self._build_expense(payload.get("expense", {})))
-            return {"expense": self._serialize(expense), "errors": self._serialize(errors)}
+    def _op_update_expense(self, client, payload, session):
+        expense, errors = client.updateExpense(self._build_expense(payload.get("expense", {})))
+        return {"expense": self._serialize(expense), "errors": self._serialize(errors)}
 
-        if operation == "deleteExpense":
-            success, errors = client.deleteExpense(payload["id"])
-            return {"success": success, "errors": self._serialize(errors)}
+    def _op_delete_expense(self, client, payload, session):
+        success, errors = client.deleteExpense(payload["id"])
+        return {"success": success, "errors": self._serialize(errors)}
 
-        if operation == "getCurrencies":
-            return self._serialize(client.getCurrencies())
+    def _op_get_currencies(self, client, payload, session):
+        return self._serialize(client.getCurrencies())
 
-        if operation == "getCategories":
-            return self._serialize(client.getCategories())
+    def _op_get_categories(self, client, payload, session):
+        return self._serialize(client.getCategories())
 
-        if operation == "getComments":
-            return self._serialize(client.getComments(payload["expense_id"]))
+    def _op_get_comments(self, client, payload, session):
+        return self._serialize(client.getComments(payload["expense_id"]))
 
-        if operation == "createComment":
-            comment, errors = client.createComment(payload["expense_id"], payload["content"])
-            return {"comment": self._serialize(comment), "errors": self._serialize(errors)}
+    def _op_create_comment(self, client, payload, session):
+        comment, errors = client.createComment(payload["expense_id"], payload["content"])
+        return {"comment": self._serialize(comment), "errors": self._serialize(errors)}
 
-        if operation == "getNotifications":
-            return self._serialize(client.getNotifications(payload.get("updated_since"), payload.get("limit")))
-
-        raise ValueError("Unsupported operation")
+    def _op_get_notifications(self, client, payload, session):
+        return self._serialize(client.getNotifications(payload.get("updated_since"), payload.get("limit")))
 
     def _build_client(self, session):
         consumer_key = session.get("consumer_key") or self.environment.get("SPLITWISE_CONSUMER_KEY")
