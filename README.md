@@ -15,6 +15,16 @@ The latest version of splitwise SDK is Splitwise-3.0.0
 
 The detailed docs are hosted at [readthedocs.org](https://readthedocs.org/projects/splitwise/)
 
+## Progressive web app demo
+
+This repository now includes a mobile-first progressive web app that exercises every public SDK API method through a local browser session. To run it locally, set `SPLITWISE_CONSUMER_KEY` and `SPLITWISE_CONSUMER_SECRET` (or enter them in the UI), then start:
+
+```sh
+python -m splitwise.pwa
+```
+
+Open `http://127.0.0.1:8765` on desktop or mobile. The app exposes OAuth 1, OAuth 2, profile, friends, groups, expenses, comments, categories, currencies, and notifications workflows, and installs as a PWA with an offline-cached shell.
+
 ## Installation
 
 Install using pip :
