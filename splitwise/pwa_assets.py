@@ -564,13 +564,13 @@ const OPERATION_GROUPS = [
         label: 'Update user',
         description: 'Sends a partial User payload to Splitwise.',
         jsonTemplate:
-          '{\n' +
-          '  "user": {\n' +
-          '    "id": 12345,\n' +
-          '    "first_name": "Alex",\n' +
-          '    "last_name": "Example",\n' +
-          '    "email": "alex@example.com"\n' +
-          '  }\n' +
+          '{\\n' +
+          '  "user": {\\n' +
+          '    "id": 12345,\\n' +
+          '    "first_name": "Alex",\\n' +
+          '    "last_name": "Example",\\n' +
+          '    "email": "alex@example.com"\\n' +
+          '  }\\n' +
           '}',
       },
       {
@@ -600,16 +600,16 @@ const OPERATION_GROUPS = [
         label: 'Create group',
         description: 'Creates a new group and optional starter members.',
         jsonTemplate:
-          '{\n' +
-          '  "group": {\n' +
-          '    "name": "Weekend trip",\n' +
-          '    "group_type": "trip",\n' +
-          '    "whiteboard": "Bring snacks",\n' +
-          '    "country_code": "US",\n' +
-          '    "members": [\n' +
-          '      {"first_name": "Sam", "last_name": "Guest", "email": "sam@example.com"}\n' +
-          '    ]\n' +
-          '  }\n' +
+          '{\\n' +
+          '  "group": {\\n' +
+          '    "name": "Weekend trip",\\n' +
+          '    "group_type": "trip",\\n' +
+          '    "whiteboard": "Bring snacks",\\n' +
+          '    "country_code": "US",\\n' +
+          '    "members": [\\n' +
+          '      {"first_name": "Sam", "last_name": "Guest", "email": "sam@example.com"}\\n' +
+          '    ]\\n' +
+          '  }\\n' +
           '}',
       },
       {
@@ -617,14 +617,14 @@ const OPERATION_GROUPS = [
         label: 'Add user to group',
         description: 'Adds a new or existing member to a group.',
         jsonTemplate:
-          '{\n' +
-          '  "group_id": 123,\n' +
-          '  "user": {\n' +
-          '    "id": 456,\n' +
-          '    "first_name": "Pat",\n' +
-          '    "last_name": "Member",\n' +
-          '    "email": "pat@example.com"\n' +
-          '  }\n' +
+          '{\\n' +
+          '  "group_id": 123,\\n' +
+          '  "user": {\\n' +
+          '    "id": 456,\\n' +
+          '    "first_name": "Pat",\\n' +
+          '    "last_name": "Member",\\n' +
+          '    "email": "pat@example.com"\\n' +
+          '  }\\n' +
           '}',
       },
       {
@@ -643,7 +643,7 @@ const OPERATION_GROUPS = [
         operation: 'getExpenses',
         label: 'Get expenses',
         description: 'Reads the expense feed with optional filters.',
-        jsonTemplate: '{\n  "offset": 0,\n  "limit": 20,\n  "visible": true\n}',
+        jsonTemplate: '{\\n  "offset": 0,\\n  "limit": 20,\\n  "visible": true\\n}',
       },
       {
         operation: 'getExpense',
@@ -656,18 +656,18 @@ const OPERATION_GROUPS = [
         label: 'Create expense',
         description: 'Creates a new expense with manual or equal splits.',
         jsonTemplate:
-          '{\n' +
-          '  "expense": {\n' +
-          '    "cost": "24.50",\n' +
-          '    "description": "Dinner",\n' +
-          '    "currency_code": "USD",\n' +
-          '    "group_id": 123,\n' +
-          '    "split_equally": true,\n' +
-          '    "users": [\n' +
-          '      {"id": 12345, "paid_share": "24.50", "owed_share": "12.25"},\n' +
-          '      {"id": 67890, "paid_share": "0.00", "owed_share": "12.25"}\n' +
-          '    ]\n' +
-          '  }\n' +
+          '{\\n' +
+          '  "expense": {\\n' +
+          '    "cost": "24.50",\\n' +
+          '    "description": "Dinner",\\n' +
+          '    "currency_code": "USD",\\n' +
+          '    "group_id": 123,\\n' +
+          '    "split_equally": true,\\n' +
+          '    "users": [\\n' +
+          '      {"id": 12345, "paid_share": "24.50", "owed_share": "12.25"},\\n' +
+          '      {"id": 67890, "paid_share": "0.00", "owed_share": "12.25"}\\n' +
+          '    ]\\n' +
+          '  }\\n' +
           '}',
       },
       {
@@ -675,13 +675,13 @@ const OPERATION_GROUPS = [
         label: 'Update expense',
         description: 'Updates an existing expense using a partial payload.',
         jsonTemplate:
-          '{\n' +
-          '  "expense": {\n' +
-          '    "id": 555,\n' +
-          '    "description": "Updated dinner",\n' +
-          '    "details": "Added dessert",\n' +
-          '    "cost": "30.00"\n' +
-          '  }\n' +
+          '{\\n' +
+          '  "expense": {\\n' +
+          '    "id": 555,\\n' +
+          '    "description": "Updated dinner",\\n' +
+          '    "details": "Added dessert",\\n' +
+          '    "cost": "30.00"\\n' +
+          '  }\\n' +
           '}',
       },
       {
@@ -717,7 +717,7 @@ const OPERATION_GROUPS = [
         operation: 'getNotifications',
         label: 'Get notifications',
         description: 'Fetches recent notifications.',
-        jsonTemplate: '{\n  "limit": 20\n}',
+        jsonTemplate: '{\\n  "limit": 20\\n}',
       },
     ],
   },
