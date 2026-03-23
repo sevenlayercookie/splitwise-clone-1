@@ -1,9 +1,10 @@
 import json
 import secrets
-import warnings
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from email.parser import BytesParser
+from email.policy import default
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
@@ -23,7 +24,7 @@ class SplitwiseBackendApp(object):
         except KeyError:
             return self._respond_json(start_response, "404 Not Found", {"errors": {"base": ["Resource not found"]}})
         except Exception as exc:  # pragma: no cover - protective fallback
-            return self._respond_json(start_response, "500 Internal Server Error", {"errors": {"base": [str(exc)]}})
+            return self._respond_json(start_response, "500 Internal Server Error", {"errors": {"base": ["Internal server error"]}})
 
     def _route(self, method, path, environ):
         if method == "OPTIONS":
@@ -629,19 +630,22 @@ class SplitwiseBackendApp(object):
             return params
 
         if content_type.startswith("multipart/form-data"):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", DeprecationWarning)
-                import cgi
-            fp = environ["wsgi.input"]
-            fp.seek(0)
-            form = cgi.FieldStorage(fp=fp, environ=environ, keep_blank_values=True)
-            for key in form.keys():
-                field = form[key]
-                if isinstance(field, list):
-                    field = field[-1]
-                if getattr(field, "filename", None):
+            raw = self._read_body(environ)
+            if not raw:
+                return params
+            message = BytesParser(policy=default).parsebytes(
+                b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw
+            )
+            for part in message.iter_parts():
+                if part.get_content_disposition() != "form-data":
                     continue
-                params[key] = field.value
+                key = part.get_param("name", header="content-disposition")
+                if not key or part.get_filename():
+                    continue
+                value = part.get_content()
+                if isinstance(value, bytes):
+                    value = value.decode(part.get_content_charset() or "utf-8")
+                params[key] = value
             return params
 
         raw = self._read_body(environ)
