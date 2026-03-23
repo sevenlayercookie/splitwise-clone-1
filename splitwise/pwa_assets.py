@@ -14,10 +14,10 @@ INDEX_HTML = """<!doctype html>
     <div class="app-shell">
       <div class="phone-frame shell">
         <header class="app-bar">
-          <button id="open-tools-button" class="icon-button" type="button" aria-label="Open tools">✕</button>
+          <button id="open-tools-button" class="icon-button" type="button" aria-label="Open tools">☰</button>
           <div class="app-bar-copy">
             <p class="eyebrow">Splitwise PWA Console</p>
-            <h1>Add an expense</h1>
+            <h1 id="screen-title">Add an expense</h1>
           </div>
           <button id="quick-expense-save" class="save-button" type="button">Save</button>
         </header>
@@ -37,36 +37,100 @@ INDEX_HTML = """<!doctype html>
 
         <section class="participant-panel" id="dashboard-panel">
           <div class="participant-copy">
-            <p class="participant-label">With you and:</p>
+            <p id="participant-label" class="participant-label">With you and:</p>
             <small id="session-summary">Reading configuration…</small>
           </div>
-          <div id="dashboard-actions" class="participant-chips" aria-label="Expense participants"></div>
+          <div id="dashboard-actions" class="participant-chips" aria-label="Primary mobile context"></div>
         </section>
 
+        <nav class="screen-switcher" aria-label="Mobile screens">
+          <button class="screen-tab" type="button" data-screen="add">Add</button>
+          <button class="screen-tab" type="button" data-screen="group">Group</button>
+          <button class="screen-tab" type="button" data-screen="activity">Activity</button>
+          <button class="screen-tab" type="button" data-screen="balances">Balances</button>
+        </nav>
+
         <main class="layout">
-          <section class="composer-card panel">
-            <form id="quick-expense-form" class="expense-form">
-              <label class="input-row">
-                <span class="input-icon">🧾</span>
-                <input id="quick-description" name="quick_description" autocomplete="off" placeholder="Enter a description">
-              </label>
-              <label class="input-row amount-row">
-                <span class="input-icon amount-icon">$</span>
-                <input id="quick-cost" name="quick_cost" inputmode="decimal" autocomplete="off" placeholder="0.00">
-              </label>
-              <button id="quick-split-button" class="split-pill" type="button">Paid by you and split equally</button>
-              <label id="quick-note-row" class="note-row hidden">
-                Note
-                <textarea id="quick-note-input" name="quick_note" rows="3" placeholder="Add a note or receipt context"></textarea>
-              </label>
-            </form>
+          <section class="screen-panel" data-screen="add">
+            <section class="composer-card panel">
+              <form id="quick-expense-form" class="expense-form">
+                <label class="input-row">
+                  <span class="input-icon">🧾</span>
+                  <input id="quick-description" name="quick_description" autocomplete="off" placeholder="Enter a description">
+                </label>
+                <label class="input-row amount-row">
+                  <span class="input-icon amount-icon">$</span>
+                  <input id="quick-cost" name="quick_cost" inputmode="decimal" autocomplete="off" placeholder="0.00">
+                </label>
+                <button id="quick-split-button" class="split-pill" type="button">Paid by you and split equally</button>
+                <label id="quick-note-row" class="note-row hidden">
+                  Note
+                  <textarea id="quick-note-input" name="quick_note" rows="3" placeholder="Add a note or receipt context"></textarea>
+                </label>
+              </form>
+            </section>
+
+            <section class="toolbar-card panel" aria-label="Expense details">
+              <button id="quick-date-button" class="toolbar-item toolbar-date" type="button">Today</button>
+              <button id="quick-group-button" class="toolbar-item toolbar-group" type="button">No group</button>
+              <button id="quick-receipt-button" class="toolbar-item toolbar-icon toolbar-receipt" type="button" aria-label="Receipt">📷</button>
+              <button id="quick-note-button" class="toolbar-item toolbar-icon toolbar-note" type="button" aria-label="Notes">✎</button>
+            </section>
           </section>
 
-          <section class="toolbar-card panel" aria-label="Expense details">
-            <button id="quick-date-button" class="toolbar-item toolbar-date" type="button">Today</button>
-            <button id="quick-group-button" class="toolbar-item toolbar-group" type="button">No group</button>
-            <button id="quick-receipt-button" class="toolbar-item toolbar-icon toolbar-receipt" type="button" aria-label="Receipt">📷</button>
-            <button id="quick-note-button" class="toolbar-item toolbar-icon toolbar-note" type="button" aria-label="Notes">✎</button>
+          <section class="screen-panel" data-screen="group">
+            <section class="panel screen-card group-hero-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2 id="group-screen-title">Group screen</h2>
+                  <p id="group-screen-summary">Choose a group to inspect balances, members, and recent expenses.</p>
+                </div>
+              </div>
+              <div id="group-balance-summary" class="summary-pills"></div>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Members</h2>
+                  <p>Balances mirror the local backend’s Splitwise-style payloads.</p>
+                </div>
+              </div>
+              <div id="group-member-list" class="collection-list"></div>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Recent group expenses</h2>
+                  <p>Latest activity for the selected group.</p>
+                </div>
+              </div>
+              <div id="group-expense-list" class="collection-list"></div>
+            </section>
+          </section>
+
+          <section class="screen-panel" data-screen="activity">
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Recent activity</h2>
+                  <p>Notifications and expense updates from the local backend.</p>
+                </div>
+              </div>
+              <div id="activity-stats" class="summary-pills"></div>
+              <div id="activity-feed" class="activity-feed"></div>
+            </section>
+          </section>
+
+          <section class="screen-panel" data-screen="balances">
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Friend balances</h2>
+                  <p>Outstanding balances and per-group context for each friend.</p>
+                </div>
+              </div>
+              <div id="balance-list" class="collection-list"></div>
+            </section>
           </section>
 
           <section class="panel" id="result-panel">
@@ -159,7 +223,6 @@ STYLES_CSS = """:root {
   --surface: #ffffff;
   --surface-soft: #fbfbfc;
   --border: #dde1e6;
-  --border-strong: #cfd4dc;
   --text: #2d3138;
   --muted: #8a97a8;
   --accent: #18b394;
@@ -167,6 +230,7 @@ STYLES_CSS = """:root {
   --orange: #ff6b2c;
   --purple: #a86ef7;
   --teal: #20c8ba;
+  --blue: #226ca7;
   --shadow: 0 14px 34px rgba(64, 71, 86, 0.12);
   --radius: 1.35rem;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -182,10 +246,6 @@ body {
   min-height: 100%;
   background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
   color: var(--text);
-}
-
-body {
-  padding: 0;
 }
 
 button,
@@ -253,7 +313,7 @@ button.hidden,
   border-radius: 50%;
   background: transparent;
   color: var(--text);
-  font-size: 2rem;
+  font-size: 1.45rem;
   line-height: 1;
   padding: 0;
 }
@@ -308,7 +368,8 @@ button.hidden,
   border-bottom: 1px solid var(--border);
 }
 
-.status-pill {
+.status-pill,
+.summary-pill {
   min-width: 7rem;
   padding: 0.55rem 0.8rem;
   border: 1px solid var(--border);
@@ -316,9 +377,12 @@ button.hidden,
   background: #fff;
 }
 
-.status-label {
+.status-label,
+.summary-label,
+.row-meta,
+.activity-meta {
   display: block;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -329,10 +393,14 @@ button.hidden,
   white-space: nowrap;
 }
 
-.participant-panel {
-  padding: 1rem 1rem 0.9rem;
+.participant-panel,
+.screen-switcher {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.participant-panel {
+  padding: 1rem 1rem 0.9rem;
 }
 
 .participant-copy {
@@ -354,18 +422,29 @@ button.hidden,
 label,
 .result-meta,
 .hint,
-.developer-summary p {
+.developer-summary p,
+.empty-copy,
+.muted-copy {
   color: var(--muted);
 }
 
-.participant-chips {
+.participant-chips,
+.screen-switcher {
   display: flex;
   gap: 0.65rem;
   overflow-x: auto;
+}
+
+.participant-chips {
   padding-bottom: 0.25rem;
 }
 
-.participant-chip {
+.screen-switcher {
+  padding: 0.8rem 1rem;
+}
+
+.participant-chip,
+.screen-tab {
   display: inline-flex;
   align-items: center;
   gap: 0.65rem;
@@ -378,12 +457,20 @@ label,
   box-shadow: 0 3px 10px rgba(15, 23, 42, 0.05);
 }
 
-.participant-chip.selected {
-  border-color: rgba(24, 179, 148, 0.45);
-  box-shadow: 0 10px 18px rgba(24, 179, 148, 0.16);
+.screen-tab {
+  padding: 0.55rem 0.95rem;
+  color: var(--muted);
 }
 
-.participant-avatar {
+.participant-chip.selected,
+.screen-tab.active {
+  border-color: rgba(24, 179, 148, 0.45);
+  box-shadow: 0 10px 18px rgba(24, 179, 148, 0.16);
+  color: var(--accent-strong);
+}
+
+.participant-avatar,
+.row-avatar {
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
@@ -393,12 +480,22 @@ label,
   justify-content: center;
   font-weight: 700;
   color: #5b4650;
+  flex: none;
 }
 
 .layout {
   display: grid;
   gap: 0.95rem;
   padding: 1rem;
+}
+
+.screen-panel {
+  display: none;
+  gap: 0.95rem;
+}
+
+.screen-panel.active {
+  display: grid;
 }
 
 .panel,
@@ -415,11 +512,15 @@ label,
 .snapshot-panel,
 #result-panel,
 .developer-content,
-.dashboard-card {
+.dashboard-card,
+.screen-card {
   padding: 1rem;
 }
 
-.expense-form {
+.expense-form,
+.collection-list,
+.activity-feed,
+.balance-list {
   display: grid;
   gap: 1rem;
 }
@@ -521,7 +622,7 @@ textarea::placeholder {
   padding: 0.75rem 0.9rem;
 }
 
-.toolbar-date { color: #226ca7; }
+.toolbar-date { color: var(--blue); }
 .toolbar-group { color: var(--orange); }
 .toolbar-receipt { color: var(--purple); }
 .toolbar-note { color: var(--teal); }
@@ -534,7 +635,9 @@ textarea::placeholder {
 
 .panel-heading,
 .compact-heading,
-.developer-summary {
+.developer-summary,
+.row-main,
+.timeline-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -546,6 +649,92 @@ textarea::placeholder {
   margin: 0.25rem 0 0;
   font-size: 0.9rem;
 }
+
+.summary-pills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.summary-value,
+.amount-copy strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.collection-list {
+  margin-top: 0.25rem;
+}
+
+.list-row,
+.activity-item {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.list-row:last-child,
+.activity-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.row-main {
+  align-items: flex-start;
+}
+
+.row-copy {
+  flex: 1;
+}
+
+.row-copy strong,
+.activity-title {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.row-copy p,
+.activity-body,
+.dashboard-card p,
+.dashboard-card ul,
+.dashboard-card pre,
+.dashboard-card li,
+.empty-copy,
+.muted-copy {
+  margin: 0.2rem 0 0;
+}
+
+.amount-positive { color: var(--accent-strong); }
+.amount-negative { color: #c73c52; }
+.amount-neutral { color: var(--muted); }
+
+.amount-copy {
+  text-align: right;
+}
+
+.inline-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.mini-badge,
+.timeline-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #eef2f5;
+  color: #59667a;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.timeline-badge.expense { color: var(--orange); }
+.timeline-badge.notification { color: var(--purple); }
 
 .result-output {
   margin: 0;
@@ -572,7 +761,6 @@ textarea::placeholder {
 .dashboard-card p,
 .dashboard-card ul,
 .dashboard-card pre {
-  margin: 0;
   color: var(--muted);
 }
 
@@ -730,8 +918,22 @@ textarea::placeholder {
   }
 
   .layout {
-    grid-template-columns: 1.15fr 0.85fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
+  }
+
+  .screen-panel {
+    grid-column: span 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .screen-panel[data-screen="activity"],
+  .screen-panel[data-screen="balances"] {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-panel > :first-child:last-child {
+    grid-column: span 2;
   }
 
   .composer-card,
@@ -997,12 +1199,28 @@ const OPERATION_GROUPS = [
   },
 ];
 
+const SCREEN_KEY = 'splitwise-pwa-screen';
+const SCREEN_META = {
+  add: { title: 'Add an expense', action: 'Save', label: 'With you and:' },
+  group: { title: 'Group screen', action: 'Add', label: 'Choose a group:' },
+  activity: { title: 'Recent activity', action: 'Add', label: 'Filter activity:' },
+  balances: { title: 'Balances', action: 'Add', label: 'Focus on:' },
+};
+const ACTIVITY_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'expenses', label: 'Expenses' },
+  { id: 'updates', label: 'Updates' },
+];
+
 const state = {
   config: null,
   usedOperations: new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')),
   dashboard: JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || '{}'),
   installPrompt: null,
-  hydrated: false,
+  workspaceHydrated: false,
+  screen: localStorage.getItem(SCREEN_KEY) || 'add',
+  groupViewId: null,
+  activityFilter: 'all',
   composer: {
     friendId: null,
     groupId: 0,
@@ -1020,8 +1238,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderCachedResult();
   renderCoverage();
   renderDashboardCache();
-  renderParticipantChips();
-  renderComposerState();
+  renderCurrentScreen();
   updateConnectivity();
   window.addEventListener('online', updateConnectivity);
   window.addEventListener('offline', updateConnectivity);
@@ -1062,6 +1279,18 @@ function bindElements() {
   elements.quickNoteInput = document.getElementById('quick-note-input');
   elements.openToolsButton = document.getElementById('open-tools-button');
   elements.credentialsPanel = document.getElementById('credentials-panel');
+  elements.participantLabel = document.getElementById('participant-label');
+  elements.screenTitle = document.getElementById('screen-title');
+  elements.screenTabs = Array.from(document.querySelectorAll('.screen-tab'));
+  elements.screenPanels = Array.from(document.querySelectorAll('.screen-panel'));
+  elements.groupScreenTitle = document.getElementById('group-screen-title');
+  elements.groupScreenSummary = document.getElementById('group-screen-summary');
+  elements.groupBalanceSummary = document.getElementById('group-balance-summary');
+  elements.groupMemberList = document.getElementById('group-member-list');
+  elements.groupExpenseList = document.getElementById('group-expense-list');
+  elements.activityStats = document.getElementById('activity-stats');
+  elements.activityFeed = document.getElementById('activity-feed');
+  elements.balanceList = document.getElementById('balance-list');
 }
 
 function wireBaseInteractions() {
@@ -1078,6 +1307,10 @@ function wireBaseInteractions() {
   elements.openToolsButton.addEventListener('click', () => {
     elements.credentialsPanel.open = !elements.credentialsPanel.open;
     elements.credentialsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  elements.screenTabs.forEach((button) => {
+    button.addEventListener('click', () => navigateToScreen(button.dataset.screen));
   });
 
   elements.sessionForm.addEventListener('submit', async (event) => {
@@ -1106,7 +1339,7 @@ function wireBaseInteractions() {
     if (response) {
       showToast('Session updated', 'success');
       elements.sessionForm.reset();
-      state.hydrated = false;
+      state.workspaceHydrated = false;
       await loadConfig();
     }
   });
@@ -1117,15 +1350,15 @@ function wireBaseInteractions() {
       state.usedOperations.clear();
       persistUsedOperations();
       state.dashboard = {};
-      state.hydrated = false;
+      state.workspaceHydrated = false;
+      state.groupViewId = null;
       state.composer.friendId = null;
       state.composer.groupId = 0;
       localStorage.removeItem(DASHBOARD_CACHE_KEY);
       showToast('Session cleared', 'success');
       renderCoverage();
       renderDashboardCache();
-      renderParticipantChips();
-      renderComposerState();
+      renderCurrentScreen();
       await loadConfig();
     }
   });
@@ -1141,7 +1374,12 @@ function wireBaseInteractions() {
   });
 
   elements.quickExpenseSave.addEventListener('click', async () => {
-    await saveQuickExpense();
+    if (state.screen === 'add') {
+      await saveQuickExpense();
+      return;
+    }
+    navigateToScreen('add');
+    showToast('Switched to add expense', 'success');
   });
 
   elements.quickSplitButton.addEventListener('click', () => {
@@ -1174,13 +1412,42 @@ function wireBaseInteractions() {
   });
 
   elements.dashboardActions.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-friend-id]');
+    const button = event.target.closest('button[data-friend-id], button[data-group-id], button[data-filter]');
     if (!button) {
       return;
     }
-    state.composer.friendId = Number(button.dataset.friendId);
-    renderParticipantChips();
+    if (button.dataset.friendId) {
+      state.composer.friendId = Number(button.dataset.friendId);
+      if (state.screen === 'balances') {
+        navigateToScreen('add');
+      } else {
+        renderCurrentScreen();
+      }
+      return;
+    }
+    if (button.dataset.groupId) {
+      state.groupViewId = Number(button.dataset.groupId);
+      state.composer.groupId = state.groupViewId;
+      renderCurrentScreen();
+      return;
+    }
+    if (button.dataset.filter) {
+      state.activityFilter = button.dataset.filter;
+      renderCurrentScreen();
+    }
   });
+}
+
+function navigateToScreen(screen) {
+  state.screen = screen;
+  localStorage.setItem(SCREEN_KEY, screen);
+  if (screen === 'group') {
+    const group = currentGroup();
+    if (group) {
+      state.composer.groupId = group.id;
+    }
+  }
+  renderCurrentScreen();
 }
 
 async function loadConfig() {
@@ -1192,9 +1459,8 @@ async function loadConfig() {
   renderSessionState();
   renderCoverage();
   renderDashboardCache();
-  renderParticipantChips();
-  renderComposerState();
-  if (config.configured && !state.hydrated) {
+  renderCurrentScreen();
+  if (config.configured && !state.workspaceHydrated) {
     await hydrateWorkspace(false);
   }
 }
@@ -1203,16 +1469,33 @@ async function hydrateWorkspace(forceRefresh) {
   if (!state.config || !state.config.configured) {
     return;
   }
-  if (state.hydrated && !forceRefresh) {
+  if (state.workspaceHydrated && !forceRefresh) {
     return;
   }
-  state.hydrated = true;
+  state.workspaceHydrated = true;
   for (const [, operation] of QUICK_ACTIONS) {
     await invokeOperation(operation, {}, { silent: true, preserveResult: true });
   }
+  renderCurrentScreen();
+  renderDashboardCache();
+}
+
+function renderCurrentScreen() {
+  const meta = SCREEN_META[state.screen] || SCREEN_META.add;
+  elements.screenTitle.textContent = meta.title;
+  elements.quickExpenseSave.textContent = meta.action;
+  elements.participantLabel.textContent = meta.label;
+  elements.screenTabs.forEach((button) => {
+    button.classList.toggle('active', button.dataset.screen === state.screen);
+  });
+  elements.screenPanels.forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.screen === state.screen);
+  });
   renderParticipantChips();
   renderComposerState();
-  renderDashboardCache();
+  renderGroupScreen();
+  renderActivityScreen();
+  renderBalancesScreen();
 }
 
 function renderSessionState() {
@@ -1346,15 +1629,13 @@ async function saveQuickExpense() {
     return;
   }
 
-  const currentUser = state.dashboard.getCurrentUser;
-  const participants = state.dashboard.getFriends || [];
-  let selectedFriend = participants.find((friend) => friend.id === state.composer.friendId) || participants[0];
-  if (!currentUser || !selectedFriend) {
+  let owner = state.dashboard.getCurrentUser;
+  let companion = selectedFriend();
+  if (!owner || !companion) {
     await hydrateWorkspace(true);
+    owner = state.dashboard.getCurrentUser;
+    companion = selectedFriend();
   }
-  const owner = state.dashboard.getCurrentUser;
-  selectedFriend = (state.dashboard.getFriends || []).find((friend) => friend.id === state.composer.friendId) || (state.dashboard.getFriends || [])[0];
-  const companion = selectedFriend;
   if (!owner || !companion) {
     showToast('Load at least one friend before creating an expense', 'error');
     return;
@@ -1385,7 +1666,7 @@ async function saveQuickExpense() {
   const createdExpense = response.data && response.data.expense ? response.data.expense : null;
   if (createdExpense) {
     const existingExpenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
-    state.dashboard.getExpenses = [createdExpense, ...existingExpenses].slice(0, 6);
+    state.dashboard.getExpenses = [createdExpense, ...existingExpenses].slice(0, 8);
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(state.dashboard));
     renderDashboardCache();
   }
@@ -1394,7 +1675,7 @@ async function saveQuickExpense() {
   elements.quickCost.value = '';
   elements.quickNoteInput.value = '';
   state.composer.noteVisible = false;
-  renderComposerState();
+  renderCurrentScreen();
 }
 
 async function invokeOperation(operation, payload = {}, options = {}) {
@@ -1415,12 +1696,7 @@ async function invokeOperation(operation, payload = {}, options = {}) {
     state.dashboard[operation] = response.data;
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(state.dashboard));
     renderDashboardCache();
-    if (operation === 'getFriends') {
-      renderParticipantChips();
-    }
-    if (operation === 'getGroups') {
-      renderComposerState();
-    }
+    renderCurrentScreen();
   }
 
   if (!options.silent) {
@@ -1431,16 +1707,21 @@ async function invokeOperation(operation, payload = {}, options = {}) {
 
 function renderParticipantChips() {
   elements.dashboardActions.innerHTML = '';
+  if (state.screen === 'group') {
+    renderGroupChips();
+    return;
+  }
+  if (state.screen === 'activity') {
+    renderActivityFilterChips();
+    return;
+  }
+  renderFriendChips();
+}
+
+function renderFriendChips() {
   const friends = Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
   if (!friends.length) {
-    const placeholder = document.createElement('button');
-    placeholder.type = 'button';
-    placeholder.className = 'participant-chip';
-    placeholder.textContent = 'Load friends to start';
-    placeholder.addEventListener('click', async () => {
-      await hydrateWorkspace(true);
-    });
-    elements.dashboardActions.appendChild(placeholder);
+    renderChipPlaceholder('Load friends to start');
     return;
   }
 
@@ -1453,34 +1734,195 @@ function renderParticipantChips() {
     button.type = 'button';
     button.className = `participant-chip${state.composer.friendId === friend.id ? ' selected' : ''}`;
     button.dataset.friendId = String(friend.id);
-    const initials = [friend.first_name, friend.last_name]
-      .filter((part) => part && part.length)
-      .map((part) => part[0])
-      .join('')
-      .slice(0, 2) || '?';
     button.innerHTML = `
-      <span class="participant-avatar">${escapeHtml(initials.toUpperCase())}</span>
-      <span>${escapeHtml(friend.first_name)}${friend.last_name ? ` ${escapeHtml(friend.last_name)}` : ''}</span>
+      <span class="participant-avatar">${escapeHtml(getInitials(friend.first_name, friend.last_name))}</span>
+      <span>${escapeHtml(displayName(friend))}</span>
     `;
     elements.dashboardActions.appendChild(button);
   });
 }
 
+function renderGroupChips() {
+  const groups = availableGroups();
+  if (!groups.length) {
+    renderChipPlaceholder('Load groups to start');
+    return;
+  }
+  if (!state.groupViewId || !groups.some((group) => group.id === state.groupViewId)) {
+    state.groupViewId = groups[0].id;
+  }
+  groups.forEach((group) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `participant-chip${state.groupViewId === group.id ? ' selected' : ''}`;
+    button.dataset.groupId = String(group.id);
+    button.innerHTML = `
+      <span class="participant-avatar">${escapeHtml(getInitials(group.name))}</span>
+      <span>${escapeHtml(group.name)}</span>
+    `;
+    elements.dashboardActions.appendChild(button);
+  });
+}
+
+function renderActivityFilterChips() {
+  ACTIVITY_FILTERS.forEach((filter) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `participant-chip${state.activityFilter === filter.id ? ' selected' : ''}`;
+    button.dataset.filter = filter.id;
+    button.textContent = filter.label;
+    elements.dashboardActions.appendChild(button);
+  });
+}
+
+function renderChipPlaceholder(label) {
+  const placeholder = document.createElement('button');
+  placeholder.type = 'button';
+  placeholder.className = 'participant-chip';
+  placeholder.textContent = label;
+  placeholder.addEventListener('click', async () => {
+    await hydrateWorkspace(true);
+  });
+  elements.dashboardActions.appendChild(placeholder);
+}
+
 function renderComposerState() {
   elements.quickNoteRow.classList.toggle('hidden', !state.composer.noteVisible);
-  const groups = Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups.filter((group) => group.id !== 0) : [];
+  const groups = availableGroups();
   const selectedGroup = groups.find((group) => group.id === state.composer.groupId);
   elements.quickGroupButton.textContent = selectedGroup ? selectedGroup.name : 'No group';
   const today = new Date().toISOString().slice(0, 10);
   elements.quickDateButton.textContent = state.composer.date === today ? 'Today' : state.composer.date;
-  const friend = (state.dashboard.getFriends || []).find((item) => item.id === state.composer.friendId);
-  if (friend) {
-    elements.quickSplitButton.textContent = `Paid by you and split equally with ${friend.first_name}`;
+  const friend = selectedFriend();
+  elements.quickSplitButton.textContent = friend
+    ? `Paid by you and split equally with ${friend.first_name}`
+    : 'Paid by you and split equally';
+}
+
+function renderGroupScreen() {
+  const group = currentGroup();
+  if (!group) {
+    elements.groupScreenTitle.textContent = 'No group data yet';
+    elements.groupScreenSummary.textContent = 'Sync the dashboard to load a group screen.';
+    elements.groupBalanceSummary.innerHTML = '<div class="summary-pill"><span class="summary-label">Status</span><strong class="summary-value">Awaiting data</strong></div>';
+    elements.groupMemberList.innerHTML = '<p class="empty-copy">No members available.</p>';
+    elements.groupExpenseList.innerHTML = '<p class="empty-copy">No group expenses available.</p>';
+    return;
   }
+
+  const balances = group.members || [];
+  const expenses = (state.dashboard.getExpenses || []).filter((expense) => expense.group_id === group.id);
+  elements.groupScreenTitle.textContent = group.name;
+  elements.groupScreenSummary.textContent = group.whiteboard || `${balances.length} members • ${expenses.length} tracked expenses`;
+  elements.groupBalanceSummary.innerHTML = `
+    <div class="summary-pill">
+      <span class="summary-label">Members</span>
+      <strong class="summary-value">${balances.length}</strong>
+    </div>
+    <div class="summary-pill">
+      <span class="summary-label">Recent expenses</span>
+      <strong class="summary-value">${expenses.length}</strong>
+    </div>
+  `;
+  elements.groupMemberList.innerHTML = balances.length
+    ? balances.map((member) => `
+        <article class="list-row">
+          <div class="row-main">
+            <span class="row-avatar">${escapeHtml(getInitials(member.first_name, member.last_name))}</span>
+            <div class="row-copy">
+              <strong>${escapeHtml(displayName(member))}</strong>
+              <span class="row-meta">${member.email ? escapeHtml(member.email) : 'Group member'}</span>
+            </div>
+            <div class="amount-copy ${balanceClass(member.balances)}">
+              <strong>${escapeHtml(formatBalance(member.balances))}</strong>
+              <span class="row-meta">${escapeHtml(balanceLabel(member.balances))}</span>
+            </div>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No members available.</p>';
+  elements.groupExpenseList.innerHTML = expenses.length
+    ? expenses.slice(0, 6).map((expense) => `
+        <article class="list-row">
+          <div class="row-main">
+            <div class="row-copy">
+              <strong>${escapeHtml(expense.description || 'Expense')}</strong>
+              <p class="muted-copy">${escapeHtml(expense.details || 'Split expense')} • ${escapeHtml(formatDateLabel(expense.date || expense.created_at))}</p>
+            </div>
+            <div class="amount-copy amount-negative">
+              <strong>${escapeHtml((expense.currency_code || defaultCurrencyCode()) + ' ' + formatMoney(expense.cost || '0'))}</strong>
+              <span class="row-meta">${escapeHtml(expense.group_id === 0 ? 'non-group' : 'group expense')}</span>
+            </div>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No expenses for this group yet.</p>';
+}
+
+function renderActivityScreen() {
+  const notifications = Array.isArray(state.dashboard.getNotifications) ? state.dashboard.getNotifications : [];
+  const expenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
+  const items = buildActivityItems(notifications, expenses).filter((item) => {
+    if (state.activityFilter === 'expenses') {
+      return item.kind === 'expense';
+    }
+    if (state.activityFilter === 'updates') {
+      return item.kind === 'notification';
+    }
+    return true;
+  });
+
+  elements.activityStats.innerHTML = `
+    <div class="summary-pill">
+      <span class="summary-label">Updates</span>
+      <strong class="summary-value">${notifications.length}</strong>
+    </div>
+    <div class="summary-pill">
+      <span class="summary-label">Expenses</span>
+      <strong class="summary-value">${expenses.length}</strong>
+    </div>
+  `;
+
+  elements.activityFeed.innerHTML = items.length
+    ? items.map((item) => `
+        <article class="activity-item">
+          <div class="timeline-head">
+            <span class="timeline-badge ${item.kind}">${escapeHtml(item.label)}</span>
+            <span class="activity-meta">${escapeHtml(formatDateLabel(item.date))}</span>
+          </div>
+          <strong class="activity-title">${escapeHtml(item.title)}</strong>
+          <p class="activity-body">${escapeHtml(item.body)}</p>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No recent activity yet.</p>';
+}
+
+function renderBalancesScreen() {
+  const friends = Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
+  elements.balanceList.innerHTML = friends.length
+    ? friends.slice(0, 8).map((friend) => `
+        <article class="list-row">
+          <div class="row-main">
+            <span class="row-avatar">${escapeHtml(getInitials(friend.first_name, friend.last_name))}</span>
+            <div class="row-copy">
+              <strong>${escapeHtml(displayName(friend))}</strong>
+              <span class="row-meta">${(friend.groups || []).length} shared groups</span>
+              <div class="inline-badges">
+                ${(friend.groups || []).slice(0, 3).map((group) => `<span class="mini-badge">${escapeHtml(groupName(group.id))}</span>`).join('')}
+              </div>
+            </div>
+            <div class="amount-copy ${balanceClass(friend.balances)}">
+              <strong>${escapeHtml(formatBalance(friend.balances))}</strong>
+              <span class="row-meta">${escapeHtml(balanceLabel(friend.balances))}</span>
+            </div>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No friend balances available.</p>';
 }
 
 function cycleComposerGroup() {
-  const groups = Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups.filter((group) => group.id !== 0) : [];
+  const groups = availableGroups();
   if (!groups.length) {
     showToast('No groups available yet', 'error');
     return;
@@ -1493,7 +1935,8 @@ function cycleComposerGroup() {
   } else {
     state.composer.groupId = groups[currentIndex + 1].id;
   }
-  renderComposerState();
+  state.groupViewId = state.composer.groupId || state.groupViewId;
+  renderCurrentScreen();
 }
 
 function renderDashboardCache() {
@@ -1517,7 +1960,7 @@ function formatDashboardCard(operation, data) {
     if (!Array.isArray(data) || !data.length) {
       return '<p>No friends available.</p>';
     }
-    return `<ul>${data.slice(0, 3).map((friend) => `<li>${escapeHtml(friend.first_name)}${friend.last_name ? ` ${escapeHtml(friend.last_name)}` : ''}</li>`).join('')}</ul>`;
+    return `<ul>${data.slice(0, 3).map((friend) => `<li>${escapeHtml(displayName(friend))}</li>`).join('')}</ul>`;
   }
   if (operation === 'getGroups') {
     if (!Array.isArray(data) || !data.length) {
@@ -1577,6 +2020,105 @@ function persistUsedOperations() {
 
 function updateConnectivity() {
   elements.connectivityStatus.textContent = navigator.onLine ? 'Online' : 'Offline';
+}
+
+function availableGroups() {
+  return Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups.filter((group) => group.id !== 0) : [];
+}
+
+function currentGroup() {
+  const groups = availableGroups();
+  if (!groups.length) {
+    return null;
+  }
+  if (!state.groupViewId || !groups.some((group) => group.id === state.groupViewId)) {
+    state.groupViewId = groups[0].id;
+  }
+  return groups.find((group) => group.id === state.groupViewId) || groups[0];
+}
+
+function selectedFriend() {
+  const friends = Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
+  return friends.find((friend) => friend.id === state.composer.friendId) || friends[0] || null;
+}
+
+function displayName(person) {
+  return [person.first_name, person.last_name].filter(Boolean).join(' ') || 'Unknown';
+}
+
+function getInitials(firstName, lastName = '') {
+  return [firstName, lastName]
+    .filter((part) => part && part.length)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || '?';
+}
+
+function buildActivityItems(notifications, expenses) {
+  const notificationItems = notifications.map((item) => ({
+    kind: 'notification',
+    label: 'Update',
+    title: item.content || 'Notification',
+    body: item.source && item.source.type ? `${item.source.type} • ${item.source.id}` : 'Recent update',
+    date: item.created_at,
+  }));
+  const expenseItems = expenses.map((item) => ({
+    kind: 'expense',
+    label: 'Expense',
+    title: item.description || 'Expense',
+    body: `${item.currency_code || defaultCurrencyCode()} ${formatMoney(item.cost || '0')} • ${groupName(item.group_id)}`,
+    date: item.date || item.created_at,
+  }));
+  return [...notificationItems, ...expenseItems].sort((left, right) => new Date(right.date || 0) - new Date(left.date || 0));
+}
+
+function groupName(groupId) {
+  const groups = Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups : [];
+  const group = groups.find((item) => item.id === groupId);
+  return group ? group.name : 'No group';
+}
+
+function formatBalance(balances) {
+  const primary = Array.isArray(balances) && balances[0] ? balances[0] : null;
+  if (!primary) {
+    return `${defaultCurrencyCode()} 0.00`;
+  }
+  return `${primary.currency_code || defaultCurrencyCode()} ${formatMoney(Math.abs(Number(primary.amount || 0)))}`;
+}
+
+function balanceLabel(balances) {
+  const primary = Array.isArray(balances) && balances[0] ? balances[0] : null;
+  if (!primary) {
+    return 'settled up';
+  }
+  const amount = Number(primary.amount || 0);
+  if (amount > 0) {
+    return 'gets back';
+  }
+  if (amount < 0) {
+    return 'owes';
+  }
+  return 'settled up';
+}
+
+function balanceClass(balances) {
+  const primary = Array.isArray(balances) && balances[0] ? balances[0] : null;
+  const amount = primary ? Number(primary.amount || 0) : 0;
+  if (amount > 0) return 'amount-positive';
+  if (amount < 0) return 'amount-negative';
+  return 'amount-neutral';
+}
+
+function formatDateLabel(value) {
+  if (!value) {
+    return 'today';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function defaultCurrencyCode() {
@@ -1689,7 +2231,7 @@ MANIFEST_JSON = """{
 }
 """
 
-SERVICE_WORKER_JS = """const CACHE_NAME = 'splitwise-pwa-shell-v1';
+SERVICE_WORKER_JS = """const CACHE_NAME = 'splitwise-pwa-shell-v2';
 const SHELL_ASSETS = ['/', '/styles.css', '/app.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
