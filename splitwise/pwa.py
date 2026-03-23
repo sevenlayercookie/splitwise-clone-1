@@ -5,6 +5,7 @@ from http import cookies
 from wsgiref.simple_server import make_server
 
 from splitwise import Splitwise
+from splitwise.backend import create_backend_app
 from splitwise.category import Category
 from splitwise.exception import (
     SplitwiseBadRequestException,
@@ -66,6 +67,7 @@ class SplitwisePWAApp(object):
         self.splitwise_factory = splitwise_factory
         self.environment = environment or os.environ
         self.sessions = {}
+        self.backend_app = create_backend_app()
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO", "/") or "/"
@@ -101,11 +103,28 @@ class SplitwisePWAApp(object):
         return headers
 
     def _route_request(self, method, path, environ, session, session_id):
+        if path.startswith("/api/v3.0/") or path in ("/authorize", "/oauth/authorize", "/oauth/token"):
+            return self._delegate_to_backend(environ)
         if method == "GET":
             return self._handle_get(path, session, session_id)
         if method == "POST":
             return self._handle_post(path, environ, session)
         return "404 Not Found", {"error": "Route not found"}, "json"
+
+    def _delegate_to_backend(self, environ):
+        captured = {}
+
+        def start_response(status, response_headers):
+            captured["status"] = status
+            captured["headers"] = response_headers
+
+        body = b"".join(self.backend_app(environ, start_response))
+        content_type = "application/octet-stream"
+        for header, value in captured.get("headers", []):
+            if header.lower() == "content-type":
+                content_type = value
+                break
+        return captured["status"], body, content_type
 
     def _handle_get(self, path, session, session_id):
         if path in STATIC_ROUTES:
@@ -269,12 +288,30 @@ class SplitwisePWAApp(object):
         consumer_secret = session.get("consumer_secret") or self.environment.get("SPLITWISE_CONSUMER_SECRET")
         if not consumer_key or not consumer_secret:
             raise ValueError("consumer_key and consumer_secret are required in session or environment")
-        return self.splitwise_factory(
-            consumer_key,
-            consumer_secret,
+        base_url = self.environment.get("SPLITWISE_BACKEND_BASE_URL")
+        oauth_base_url = self.environment.get("SPLITWISE_BACKEND_OAUTH_BASE_URL")
+        kwargs = dict(
             access_token=session.get("access_token"),
             oauth2_access_token=session.get("oauth2_access_token"),
             api_key=session.get("api_key"),
+        )
+        if base_url:
+            kwargs["base_url"] = base_url
+        if oauth_base_url:
+            kwargs["oauth_base_url"] = oauth_base_url
+        try:
+            return self.splitwise_factory(
+                consumer_key,
+                consumer_secret,
+                **kwargs
+            )
+        except TypeError:
+            kwargs.pop("base_url", None)
+            kwargs.pop("oauth_base_url", None)
+            return self.splitwise_factory(
+            consumer_key,
+            consumer_secret,
+            **kwargs
         )
 
     def _has_client_credentials(self, session):

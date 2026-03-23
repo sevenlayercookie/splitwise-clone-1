@@ -1,0 +1,875 @@
+import json
+import secrets
+import warnings
+from collections import defaultdict
+from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from urllib.parse import parse_qs
+from wsgiref.simple_server import make_server
+
+
+class SplitwiseBackendApp(object):
+    def __init__(self, initial_state=None):
+        self.state = initial_state or _default_state()
+
+    def __call__(self, environ, start_response):
+        method = environ.get("REQUEST_METHOD", "GET").upper()
+        path = environ.get("PATH_INFO", "/") or "/"
+        try:
+            status, payload, content_type = self._route(method, path, environ)
+            return self._respond(start_response, status, payload, content_type)
+        except ValueError as exc:
+            return self._respond_json(start_response, "400 Bad Request", {"errors": {"base": [str(exc)]}})
+        except KeyError:
+            return self._respond_json(start_response, "404 Not Found", {"errors": {"base": ["Resource not found"]}})
+        except Exception as exc:  # pragma: no cover - protective fallback
+            return self._respond_json(start_response, "500 Internal Server Error", {"errors": {"base": [str(exc)]}})
+
+    def _route(self, method, path, environ):
+        if method == "OPTIONS":
+            return "200 OK", b"", "text/plain; charset=utf-8"
+
+        if method == "POST" and path == "/api/v3.0/get_request_token":
+            return self._handle_get_request_token()
+        if method == "POST" and path == "/api/v3.0/get_access_token":
+            return self._handle_get_access_token()
+        if method == "GET" and path in ("/authorize", "/oauth/authorize"):
+            return self._handle_authorize(environ)
+        if method == "POST" and path == "/oauth/token":
+            return self._handle_oauth2_token(environ)
+
+        if not path.startswith("/api/v3.0/"):
+            return "404 Not Found", {"errors": {"base": ["Route not found"]}}, "json"
+
+        params = self._read_params(environ)
+        endpoint = path[len("/api/v3.0/"):]
+
+        if method == "GET" and endpoint == "get_current_user":
+            return "200 OK", {"user": self._current_user_payload(self.state["current_user_id"])}, "json"
+        if method == "GET" and endpoint.startswith("get_user/"):
+            user_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "user id")
+            return "200 OK", {"user": self._user_payload(user_id)}, "json"
+        if method == "POST" and endpoint == "update_user":
+            return self._handle_update_user(params)
+        if method == "GET" and endpoint == "get_friends":
+            return "200 OK", {"friends": self._list_friends()}, "json"
+        if method == "GET" and endpoint == "get_groups":
+            return "200 OK", {"groups": self._list_groups()}, "json"
+        if method == "GET" and endpoint.startswith("get_group/"):
+            group_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "group id")
+            return "200 OK", {"group": self._group_payload(group_id)}, "json"
+        if method == "POST" and endpoint == "create_group":
+            return self._handle_create_group(params)
+        if method == "POST" and endpoint == "add_user_to_group":
+            return self._handle_add_user_to_group(params)
+        if method == "POST" and endpoint.startswith("delete_group/"):
+            group_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "group id")
+            return self._handle_delete_group(group_id)
+        if method == "GET" and endpoint == "get_currencies":
+            return "200 OK", {"currencies": list(self.state["currencies"])}, "json"
+        if method == "GET" and endpoint == "get_categories":
+            return "200 OK", {"categories": list(self.state["categories"])}, "json"
+        if method == "GET" and endpoint == "get_expenses":
+            return self._handle_get_expenses(params)
+        if method == "GET" and endpoint.startswith("get_expense/"):
+            expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
+            return "200 OK", {"expense": self._expense_payload(expense_id)}, "json"
+        if method == "POST" and endpoint == "create_expense":
+            return self._handle_create_expense(params)
+        if method == "POST" and endpoint.startswith("update_expense/"):
+            expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
+            return self._handle_update_expense(expense_id, params)
+        if method == "POST" and endpoint.startswith("delete_expense/"):
+            expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
+            return self._handle_delete_expense(expense_id)
+        if method == "GET" and endpoint == "get_comments":
+            return self._handle_get_comments(params)
+        if method == "POST" and endpoint == "create_comment":
+            return self._handle_create_comment(params)
+        if method == "GET" and endpoint == "get_notifications":
+            return self._handle_get_notifications(params)
+
+        return "404 Not Found", {"errors": {"base": ["Route not found"]}}, "json"
+
+    def _handle_get_request_token(self):
+        token = "request-%s" % secrets.token_hex(8)
+        secret = "secret-%s" % secrets.token_hex(8)
+        self.state["oauth1_request_tokens"][token] = secret
+        payload = "oauth_token=%s&oauth_token_secret=%s" % (token, secret)
+        return "200 OK", payload.encode("utf-8"), "application/x-www-form-urlencoded; charset=utf-8"
+
+    def _handle_get_access_token(self):
+        token = "access-%s" % secrets.token_hex(8)
+        secret = "access-secret-%s" % secrets.token_hex(8)
+        payload = "oauth_token=%s&oauth_token_secret=%s" % (token, secret)
+        return "200 OK", payload.encode("utf-8"), "application/x-www-form-urlencoded; charset=utf-8"
+
+    def _handle_authorize(self, environ):
+        params = self._read_params(environ)
+        oauth_token = params.get("oauth_token", "")
+        verifier = "verifier-%s" % secrets.token_hex(4)
+        body = json.dumps({"oauth_token": oauth_token, "oauth_verifier": verifier}).encode("utf-8")
+        return "200 OK", body, "application/json; charset=utf-8"
+
+    def _handle_oauth2_token(self, environ):
+        params = self._read_params(environ)
+        token = {
+            "access_token": "oauth2-%s" % secrets.token_hex(12),
+            "token_type": "bearer",
+            "scope": params.get("scope") or "read write",
+        }
+        return "200 OK", token, "json"
+
+    def _handle_update_user(self, params):
+        user_id = self._parse_int(params.get("id"), "user id")
+        user = self._ensure_user(
+            user_id,
+            first_name=params.get("first_name"),
+            last_name=params.get("last_name"),
+            email=params.get("email"),
+        )
+        if params.get("first_name") is not None:
+            user["first_name"] = params.get("first_name")
+        if "last_name" in params:
+            user["last_name"] = params.get("last_name")
+        if params.get("email") is not None:
+            user["email"] = params.get("email")
+        return "200 OK", {"user": self._current_user_payload(user_id), "errors": {}}, "json"
+
+    def _handle_create_group(self, params):
+        group_id = self._next_id("group")
+        members = [self.state["current_user_id"]]
+        index = 0
+        while True:
+            prefix = "users__%s__" % index
+            if prefix + "first_name" not in params and prefix + "user_id" not in params:
+                break
+            member_id = params.get(prefix + "user_id")
+            if member_id is not None:
+                member_id = self._parse_int(member_id, "user id")
+                member = self._ensure_user(
+                    member_id,
+                    first_name=params.get(prefix + "first_name"),
+                    last_name=params.get(prefix + "last_name"),
+                    email=params.get(prefix + "email"),
+                )
+            else:
+                member = self._create_user(
+                    first_name=params.get(prefix + "first_name") or "Guest",
+                    last_name=params.get(prefix + "last_name"),
+                    email=params.get(prefix + "email"),
+                )
+                member_id = member["id"]
+            if member_id not in members:
+                members.append(member_id)
+            index += 1
+
+        group = {
+            "id": group_id,
+            "name": params.get("name") or "Untitled group",
+            "group_type": params.get("group_type"),
+            "whiteboard": params.get("whiteboard"),
+            "country_code": params.get("country_code") or "US",
+            "created_at": self._now(),
+            "updated_at": self._now(),
+            "simplify_by_default": self._parse_bool(params.get("simplify_by_default"), False),
+            "member_ids": members,
+            "deleted": False,
+        }
+        self.state["groups"][group_id] = group
+        self._add_notification("Group '%s' created" % group["name"], "group", group_id)
+        return "200 OK", {"group": self._group_payload(group_id)}, "json"
+
+    def _handle_add_user_to_group(self, params):
+        group_id = self._parse_int(params.get("group_id"), "group id")
+        group = self._require_group(group_id)
+        user_id = params.get("user_id") or params.get("id")
+        if user_id is not None:
+            user = self._ensure_user(
+                self._parse_int(user_id, "user id"),
+                first_name=params.get("first_name"),
+                last_name=params.get("last_name"),
+                email=params.get("email"),
+            )
+        else:
+            user = self._create_user(
+                first_name=params.get("first_name") or "Guest",
+                last_name=params.get("last_name"),
+                email=params.get("email"),
+            )
+        if user["id"] not in group["member_ids"]:
+            group["member_ids"].append(user["id"])
+            group["updated_at"] = self._now()
+        self._add_notification("%s added to %s" % (user["first_name"], group["name"]), "group", group_id)
+        return "200 OK", {"success": True, "user": self._friend_payload(user["id"]), "errors": {}}, "json"
+
+    def _handle_delete_group(self, group_id):
+        if group_id == 0:
+            raise ValueError("Group 0 cannot be deleted")
+        group = self._require_group(group_id)
+        group["deleted"] = True
+        group["updated_at"] = self._now()
+        self._add_notification("Group '%s' deleted" % group["name"], "group", group_id)
+        return "200 OK", {"success": True, "errors": {}}, "json"
+
+    def _handle_get_expenses(self, params):
+        expenses = []
+        for expense in self.state["expenses"].values():
+            if self._matches_expense_filters(expense, params):
+                expenses.append(self._expense_payload(expense["id"]))
+        expenses.sort(key=lambda item: item["updated_at"], reverse=True)
+        offset = int(params.get("offset") or 0)
+        limit = params.get("limit")
+        if limit is not None:
+            limit = int(limit)
+            expenses = expenses[offset:offset + limit]
+        else:
+            expenses = expenses[offset:]
+        return "200 OK", {"expenses": expenses}, "json"
+
+    def _handle_create_expense(self, params):
+        expense_id = self._next_id("expense")
+        expense = self._build_expense_record(expense_id, params, existing=None)
+        self.state["expenses"][expense_id] = expense
+        self._add_notification("Expense '%s' created" % expense["description"], "expense", expense_id)
+        return "200 OK", {"expenses": [self._expense_payload(expense_id)], "errors": {}}, "json"
+
+    def _handle_update_expense(self, expense_id, params):
+        existing = self._require_expense(expense_id)
+        expense = self._build_expense_record(expense_id, params, existing=existing)
+        expense["created_at"] = existing["created_at"]
+        self.state["expenses"][expense_id] = expense
+        self._add_notification("Expense '%s' updated" % expense["description"], "expense", expense_id)
+        return "200 OK", {"expenses": [self._expense_payload(expense_id)], "errors": {}}, "json"
+
+    def _handle_delete_expense(self, expense_id):
+        expense = self._require_expense(expense_id)
+        expense["deleted_at"] = self._now()
+        expense["deleted_by"] = self.state["current_user_id"]
+        expense["updated_at"] = expense["deleted_at"]
+        self._add_notification("Expense '%s' deleted" % expense["description"], "expense", expense_id)
+        return "200 OK", {"success": True, "errors": {}}, "json"
+
+    def _handle_get_comments(self, params):
+        expense_id = self._parse_int(params.get("expense_id"), "expense id")
+        comments = [self._comment_payload(comment_id) for comment_id in self.state["expense_comments"].get(expense_id, [])]
+        return "200 OK", {"comments": comments}, "json"
+
+    def _handle_create_comment(self, params):
+        expense_id = self._parse_int(params.get("expense_id"), "expense id")
+        self._require_expense(expense_id)
+        content = params.get("content")
+        if not content:
+            raise ValueError("content is required")
+        comment_id = self._next_id("comment")
+        comment = {
+            "id": comment_id,
+            "expense_id": expense_id,
+            "content": content,
+            "created_at": self._now(),
+            "deleted_at": None,
+            "user_id": self.state["current_user_id"],
+        }
+        self.state["comments"][comment_id] = comment
+        self.state["expense_comments"].setdefault(expense_id, []).append(comment_id)
+        self._add_notification("Comment added to expense %s" % expense_id, "expense", expense_id)
+        return "200 OK", {"comment": self._comment_payload(comment_id), "errors": {}}, "json"
+
+    def _handle_get_notifications(self, params):
+        notifications = [self._notification_payload(item["id"]) for item in self.state["notifications"]]
+        updated_since = params.get("updated_since")
+        if updated_since:
+            notifications = [item for item in notifications if item["created_at"] >= updated_since]
+        limit = params.get("limit")
+        if limit is not None:
+            notifications = notifications[:int(limit)]
+        return "200 OK", {"notifications": notifications}, "json"
+
+    def _build_expense_record(self, expense_id, params, existing=None):
+        if existing is None:
+            created_at = self._now()
+            created_by = self.state["current_user_id"]
+        else:
+            created_at = existing["created_at"]
+            created_by = existing["created_by"]
+
+        users = self._extract_expense_users(params, existing)
+        if not users:
+            raise ValueError("at least one expense user is required")
+
+        description = params.get("description")
+        if description is None and existing is not None:
+            description = existing["description"]
+        if not description:
+            raise ValueError("description is required")
+
+        cost = params.get("cost")
+        if cost is None and existing is not None:
+            cost = existing["cost"]
+        if cost is None:
+            raise ValueError("cost is required")
+
+        group_id = params.get("group_id")
+        if group_id is None and existing is not None:
+            group_id = existing.get("group_id")
+        if group_id is not None:
+            group_id = self._parse_int(group_id, "group id")
+            self._require_group(group_id)
+
+        category_id = params.get("category_id")
+        if category_id is None and existing is not None:
+            category_id = existing.get("category_id")
+        if category_id is None:
+            category_id = self.state["categories"][0]["id"]
+        category_id = self._parse_int(category_id, "category id")
+
+        expense = {
+            "id": expense_id,
+            "group_id": group_id,
+            "friendship_id": None,
+            "expense_bundle_id": None,
+            "description": description,
+            "repeats": False,
+            "repeat_interval": "never",
+            "email_reminder": False,
+            "email_reminder_in_advance": -1,
+            "next_repeat": None,
+            "details": params.get("details") if params.get("details") is not None else (existing or {}).get("details"),
+            "payment": self._parse_bool(params.get("payment"), (existing or {}).get("payment", False)),
+            "creation_method": None,
+            "transaction_method": "offline",
+            "transaction_confirmed": False,
+            "cost": str(cost),
+            "currency_code": params.get("currency_code") or (existing or {}).get("currency_code") or self.state["currencies"][0]["currency_code"],
+            "date": params.get("date") or (existing or {}).get("date") or self._now(),
+            "created_at": created_at,
+            "created_by": created_by,
+            "updated_at": self._now(),
+            "updated_by": self.state["current_user_id"],
+            "deleted_at": None if existing is None else existing.get("deleted_at"),
+            "deleted_by": None if existing is None else existing.get("deleted_by"),
+            "category_id": category_id,
+            "receipt": {"original": None, "large": None},
+            "user_shares": users,
+            "split_equally": self._parse_bool(params.get("split_equally"), (existing or {}).get("split_equally", False)),
+        }
+        return expense
+
+    def _extract_expense_users(self, params, existing=None):
+        users = []
+        index = 0
+        while True:
+            prefix = "users__%s__" % index
+            if prefix + "user_id" not in params:
+                break
+            user_id = self._parse_int(params.get(prefix + "user_id"), "user id")
+            self._ensure_user(user_id)
+            users.append({
+                "user_id": user_id,
+                "paid_share": self._money(params.get(prefix + "paid_share", "0")),
+                "owed_share": self._money(params.get(prefix + "owed_share", "0")),
+            })
+            index += 1
+        if users:
+            return users
+        if existing is not None:
+            return list(existing["user_shares"])
+        current_user_id = self.state["current_user_id"]
+        return [{"user_id": current_user_id, "paid_share": self._money(params.get("cost", "0")), "owed_share": self._money(params.get("cost", "0"))}]
+
+    def _matches_expense_filters(self, expense, params):
+        visible = params.get("visible")
+        if visible is not None and self._parse_bool(visible, True) and expense.get("deleted_at"):
+            return False
+        if params.get("group_id") is not None:
+            if expense.get("group_id") != self._parse_int(params.get("group_id"), "group id"):
+                return False
+        if params.get("friend_id") is not None:
+            friend_id = self._parse_int(params.get("friend_id"), "friend id")
+            if friend_id not in [item["user_id"] for item in expense["user_shares"]]:
+                return False
+        if params.get("dated_after") and expense["date"] < params.get("dated_after"):
+            return False
+        if params.get("dated_before") and expense["date"] > params.get("dated_before"):
+            return False
+        if params.get("updated_after") and expense["updated_at"] < params.get("updated_after"):
+            return False
+        if params.get("updated_before") and expense["updated_at"] > params.get("updated_before"):
+            return False
+        return True
+
+    def _list_friends(self):
+        current_user_id = self.state["current_user_id"]
+        friend_ids = sorted(user_id for user_id in self.state["users"] if user_id != current_user_id)
+        return [self._friend_payload(user_id) for user_id in friend_ids]
+
+    def _list_groups(self):
+        group_ids = sorted(group_id for group_id, group in self.state["groups"].items() if not group.get("deleted"))
+        return [self._group_payload(group_id) for group_id in group_ids]
+
+    def _current_user_payload(self, user_id):
+        user = self._require_user(user_id)
+        payload = self._user_base_payload(user)
+        payload.update({
+            "default_currency": self.state["currencies"][0]["currency_code"],
+            "locale": "en",
+            "date_format": "YYYY-MM-DD",
+            "default_group_id": 0,
+        })
+        return payload
+
+    def _user_payload(self, user_id):
+        return self._user_base_payload(self._require_user(user_id))
+
+    def _friend_payload(self, user_id):
+        user = self._require_user(user_id)
+        payload = self._user_base_payload(user)
+        payload["updated_at"] = user["updated_at"]
+        payload["balance"] = self._friend_balances(user_id)
+        payload["groups"] = self._friend_groups(user_id)
+        return payload
+
+    def _group_payload(self, group_id):
+        group = self._require_group(group_id)
+        repayments = self._group_repayments(group_id)
+        return {
+            "id": group["id"],
+            "name": group["name"],
+            "created_at": group["created_at"],
+            "updated_at": group["updated_at"],
+            "simplify_by_default": group["simplify_by_default"],
+            "group_type": group.get("group_type"),
+            "whiteboard": group.get("whiteboard"),
+            "invite_link": "https://example.local/groups/%s" % group["id"],
+            "country_code": group.get("country_code") or "US",
+            "original_debts": repayments,
+            "simplified_debts": repayments,
+            "members": [self._friend_payload(member_id) for member_id in group["member_ids"]],
+        }
+
+    def _expense_payload(self, expense_id):
+        expense = self._require_expense(expense_id)
+        users = []
+        repayments = []
+        creditors = []
+        debtors = []
+        currency_code = expense["currency_code"]
+        for share in expense["user_shares"]:
+            net = Decimal(share["paid_share"]) - Decimal(share["owed_share"])
+            net_value = self._money(net)
+            user_id = share["user_id"]
+            user_payload = self._user_base_payload(self._require_user(user_id))
+            users.append({
+                "user": user_payload,
+                "user_id": user_id,
+                "paid_share": share["paid_share"],
+                "owed_share": share["owed_share"],
+                "net_balance": net_value,
+            })
+            if net > 0:
+                creditors.append([user_id, net])
+            elif net < 0:
+                debtors.append([user_id, -net])
+
+        for debtor_id, remaining in debtors:
+            while remaining > 0 and creditors:
+                creditor_id, available = creditors[0]
+                amount = min(remaining, available)
+                repayments.append({
+                    "from": debtor_id,
+                    "to": creditor_id,
+                    "amount": self._money(amount),
+                    "currency_code": currency_code,
+                })
+                remaining -= amount
+                creditors[0][1] -= amount
+                if creditors[0][1] <= 0:
+                    creditors.pop(0)
+
+        category = next((item for item in self.state["categories"] if item["id"] == expense["category_id"]), self.state["categories"][0])
+        comments = self.state["expense_comments"].get(expense_id, [])
+        return {
+            "id": expense["id"],
+            "group_id": expense["group_id"],
+            "friendship_id": expense["friendship_id"],
+            "expense_bundle_id": expense["expense_bundle_id"],
+            "description": expense["description"],
+            "repeats": expense["repeats"],
+            "repeat_interval": expense["repeat_interval"],
+            "email_reminder": expense["email_reminder"],
+            "email_reminder_in_advance": expense["email_reminder_in_advance"],
+            "next_repeat": expense["next_repeat"],
+            "details": expense["details"],
+            "comments_count": len(comments),
+            "payment": expense["payment"],
+            "creation_method": expense["creation_method"],
+            "transaction_method": expense["transaction_method"],
+            "transaction_confirmed": expense["transaction_confirmed"],
+            "cost": expense["cost"],
+            "currency_code": expense["currency_code"],
+            "created_by": self._user_base_payload(self._require_user(expense["created_by"])),
+            "date": expense["date"],
+            "created_at": expense["created_at"],
+            "updated_at": expense["updated_at"],
+            "deleted_at": expense["deleted_at"],
+            "receipt": expense["receipt"],
+            "category": {"id": category["id"], "name": category["name"]},
+            "updated_by": self._user_base_payload(self._require_user(expense["updated_by"])) if expense["updated_by"] is not None else None,
+            "deleted_by": self._user_base_payload(self._require_user(expense["deleted_by"])) if expense["deleted_by"] is not None else None,
+            "repayments": repayments,
+            "users": users,
+            "transaction_id": None,
+        }
+
+    def _comment_payload(self, comment_id):
+        comment = self.state["comments"][comment_id]
+        return {
+            "id": comment["id"],
+            "content": comment["content"],
+            "comment_type": "comment",
+            "relation_type": "ExpenseComment",
+            "relation_id": comment["expense_id"],
+            "created_at": comment["created_at"],
+            "deleted_at": comment["deleted_at"],
+            "user": self._user_base_payload(self._require_user(comment["user_id"])),
+        }
+
+    def _notification_payload(self, notification_id):
+        notification = next(item for item in self.state["notifications"] if item["id"] == notification_id)
+        return {
+            "id": notification["id"],
+            "content": notification["content"],
+            "type": notification["type"],
+            "created_at": notification["created_at"],
+            "created_by": notification["created_by"],
+            "image_shape": "square",
+            "image_url": "https://example.local/notifications/%s.png" % notification["id"],
+            "source": {
+                "id": notification["source_id"],
+                "type": notification["source_type"],
+                "url": "https://example.local/%s/%s" % (notification["source_type"].lower(), notification["source_id"]),
+            },
+        }
+
+    def _friend_balances(self, user_id):
+        totals = defaultdict(Decimal)
+        current_user_id = self.state["current_user_id"]
+        for expense in self.state["expenses"].values():
+            if expense.get("deleted_at"):
+                continue
+            user_map = {item["user_id"]: item for item in expense["user_shares"]}
+            if user_id not in user_map or current_user_id not in user_map:
+                continue
+            currency = expense["currency_code"]
+            totals[currency] += Decimal(user_map[user_id]["owed_share"]) - Decimal(user_map[user_id]["paid_share"])
+        if not totals:
+            currency = self.state["currencies"][0]["currency_code"]
+            return [{"currency_code": currency, "amount": self._money("0")}]
+        return [{"currency_code": code, "amount": self._money(amount)} for code, amount in sorted(totals.items())]
+
+    def _friend_groups(self, user_id):
+        groups = []
+        for group_id, group in self.state["groups"].items():
+            if group.get("deleted") or user_id not in group["member_ids"]:
+                continue
+            balances = self._group_member_balances(group_id)
+            groups.append({
+                "group_id": group_id,
+                "balance": balances.get(user_id, [{"currency_code": self.state["currencies"][0]["currency_code"], "amount": self._money("0")}]),
+            })
+        return groups
+
+    def _group_member_balances(self, group_id):
+        totals = defaultdict(lambda: defaultdict(Decimal))
+        for expense in self.state["expenses"].values():
+            if expense.get("deleted_at") or expense.get("group_id") != group_id:
+                continue
+            for share in expense["user_shares"]:
+                totals[share["user_id"]][expense["currency_code"]] += Decimal(share["paid_share"]) - Decimal(share["owed_share"])
+        response = {}
+        for member_id in self._require_group(group_id)["member_ids"]:
+            member_totals = totals.get(member_id)
+            if not member_totals:
+                member_totals = {self.state["currencies"][0]["currency_code"]: Decimal("0")}
+            response[member_id] = [{"currency_code": code, "amount": self._money(amount)} for code, amount in sorted(member_totals.items())]
+        return response
+
+    def _group_repayments(self, group_id):
+        repayments = []
+        for expense in self.state["expenses"].values():
+            if expense.get("deleted_at") or expense.get("group_id") != group_id:
+                continue
+            repayments.extend(self._expense_payload(expense["id"])["repayments"])
+        return repayments
+
+    def _add_notification(self, content, source_type, source_id):
+        self.state["notifications"].insert(0, {
+            "id": self._next_id("notification"),
+            "content": content,
+            "type": 0,
+            "created_at": self._now(),
+            "created_by": self.state["current_user_id"],
+            "source_type": source_type.title(),
+            "source_id": source_id,
+        })
+
+    def _read_params(self, environ):
+        params = {}
+        for key, value in parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True).items():
+            params[key] = value[-1]
+
+        if environ.get("REQUEST_METHOD", "GET").upper() != "POST":
+            return params
+
+        content_type = environ.get("CONTENT_TYPE", "")
+        if content_type.startswith("application/json"):
+            raw = self._read_body(environ)
+            if raw:
+                params.update(json.loads(raw.decode("utf-8")))
+            return params
+
+        if content_type.startswith("multipart/form-data"):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                import cgi
+            fp = environ["wsgi.input"]
+            fp.seek(0)
+            form = cgi.FieldStorage(fp=fp, environ=environ, keep_blank_values=True)
+            for key in form.keys():
+                field = form[key]
+                if isinstance(field, list):
+                    field = field[-1]
+                if getattr(field, "filename", None):
+                    continue
+                params[key] = field.value
+            return params
+
+        raw = self._read_body(environ)
+        for key, value in parse_qs(raw.decode("utf-8"), keep_blank_values=True).items():
+            params[key] = value[-1]
+        return params
+
+    def _read_body(self, environ):
+        try:
+            environ["wsgi.input"].seek(0)
+        except Exception:
+            pass
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+        return environ["wsgi.input"].read(length) if length else b""
+
+    def _require_user(self, user_id):
+        return self.state["users"][user_id]
+
+    def _ensure_user(self, user_id, first_name=None, last_name=None, email=None):
+        user = self.state["users"].get(user_id)
+        if user is None:
+            user = {
+                "id": user_id,
+                "first_name": first_name or "User",
+                "last_name": last_name,
+                "email": email or "user%s@example.com" % user_id,
+                "registration_status": "confirmed",
+                "updated_at": self._now(),
+            }
+            self.state["users"][user_id] = user
+        if first_name is not None:
+            user["first_name"] = first_name
+        if last_name is not None:
+            user["last_name"] = last_name
+        if email is not None:
+            user["email"] = email
+        user["updated_at"] = self._now()
+        return user
+
+    def _create_user(self, first_name, last_name=None, email=None):
+        user_id = self._next_id("user")
+        return self._ensure_user(user_id, first_name=first_name, last_name=last_name, email=email)
+
+    def _require_group(self, group_id):
+        group = self.state["groups"][group_id]
+        if group.get("deleted"):
+            raise KeyError(group_id)
+        return group
+
+    def _require_expense(self, expense_id):
+        return self.state["expenses"][expense_id]
+
+    def _user_base_payload(self, user):
+        return {
+            "id": user["id"],
+            "first_name": user["first_name"],
+            "last_name": user.get("last_name"),
+            "picture": self._picture_payload(user["id"]),
+            "email": user.get("email"),
+            "registration_status": user.get("registration_status") or "confirmed",
+        }
+
+    def _picture_payload(self, user_id):
+        base = "https://example.local/avatars/%s" % user_id
+        return {"small": base + "/small.png", "medium": base + "/medium.png", "large": base + "/large.png"}
+
+    def _next_id(self, key):
+        value = self.state["next_ids"][key]
+        self.state["next_ids"][key] += 1
+        return value
+
+    def _parse_int(self, value, label):
+        if value is None or value == "":
+            raise ValueError("%s is required" % label)
+        return int(value)
+
+    def _parse_bool(self, value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in ("1", "true", "yes", "on")
+
+    def _money(self, value):
+        if isinstance(value, Decimal):
+            amount = value
+        else:
+            amount = Decimal(str(value or "0"))
+        amount = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return format(amount, "f")
+
+    def _now(self):
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def _respond(self, start_response, status, payload, content_type):
+        if content_type == "json":
+            return self._respond_json(start_response, status, payload)
+        body = payload if isinstance(payload, bytes) else payload.encode("utf-8")
+        headers = [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+            ("Access-Control-Allow-Headers", "Authorization, Content-Type"),
+            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+            ("Access-Control-Allow-Origin", "*"),
+        ]
+        start_response(status, headers)
+        return [body]
+
+    def _respond_json(self, start_response, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        headers = [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+            ("Access-Control-Allow-Headers", "Authorization, Content-Type"),
+            ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+            ("Access-Control-Allow-Origin", "*"),
+        ]
+        start_response(status, headers)
+        return [body]
+
+
+def _default_state():
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    users = {
+        1: {"id": 1, "first_name": "Alex", "last_name": "Owner", "email": "alex@example.com", "registration_status": "confirmed", "updated_at": now},
+        2: {"id": 2, "first_name": "Sam", "last_name": "Friend", "email": "sam@example.com", "registration_status": "confirmed", "updated_at": now},
+        3: {"id": 3, "first_name": "Jamie", "last_name": "Roommate", "email": "jamie@example.com", "registration_status": "confirmed", "updated_at": now},
+    }
+    state = {
+        "current_user_id": 1,
+        "users": users,
+        "groups": {
+            0: {
+                "id": 0,
+                "name": "Non-group expenses",
+                "group_type": None,
+                "whiteboard": None,
+                "country_code": "US",
+                "created_at": now,
+                "updated_at": now,
+                "simplify_by_default": False,
+                "member_ids": [1, 2],
+                "deleted": False,
+            },
+            1: {
+                "id": 1,
+                "name": "Apartment",
+                "group_type": "home",
+                "whiteboard": "Utilities and groceries",
+                "country_code": "US",
+                "created_at": now,
+                "updated_at": now,
+                "simplify_by_default": True,
+                "member_ids": [1, 2, 3],
+                "deleted": False,
+            },
+        },
+        "expenses": {
+            1: {
+                "id": 1,
+                "group_id": 1,
+                "friendship_id": None,
+                "expense_bundle_id": None,
+                "description": "Groceries",
+                "repeats": False,
+                "repeat_interval": "never",
+                "email_reminder": False,
+                "email_reminder_in_advance": -1,
+                "next_repeat": None,
+                "details": "Weekly shop",
+                "payment": False,
+                "creation_method": None,
+                "transaction_method": "offline",
+                "transaction_confirmed": False,
+                "cost": "36.00",
+                "currency_code": "USD",
+                "date": now,
+                "created_at": now,
+                "created_by": 1,
+                "updated_at": now,
+                "updated_by": 1,
+                "deleted_at": None,
+                "deleted_by": None,
+                "category_id": 18,
+                "receipt": {"original": None, "large": None},
+                "user_shares": [
+                    {"user_id": 1, "paid_share": "36.00", "owed_share": "12.00"},
+                    {"user_id": 2, "paid_share": "0.00", "owed_share": "12.00"},
+                    {"user_id": 3, "paid_share": "0.00", "owed_share": "12.00"},
+                ],
+                "split_equally": True,
+            }
+        },
+        "comments": {
+            1: {"id": 1, "expense_id": 1, "content": "Looks good", "created_at": now, "deleted_at": None, "user_id": 2}
+        },
+        "expense_comments": {1: [1]},
+        "notifications": [
+            {"id": 1, "content": "Apartment activity is up to date", "type": 0, "created_at": now, "created_by": 1, "source_type": "Group", "source_id": 1}
+        ],
+        "categories": [
+            {"id": 18, "name": "General", "subcategories": []},
+            {"id": 19, "name": "Food", "subcategories": [{"id": 1901, "name": "Groceries"}]},
+        ],
+        "currencies": [
+            {"currency_code": "USD", "unit": "$"},
+            {"currency_code": "EUR", "unit": "€"},
+        ],
+        "oauth1_request_tokens": {},
+        "next_ids": {"user": 4, "group": 2, "expense": 2, "comment": 2, "notification": 2},
+    }
+    return state
+
+
+def create_backend_app(initial_state=None):
+    return SplitwiseBackendApp(initial_state=initial_state)
+
+
+def main():
+    host = "127.0.0.1"
+    port = 8766
+    app = create_backend_app()
+    with make_server(host, port, app) as server:
+        print("Splitwise backend listening on http://%s:%s" % (host, port))
+        server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

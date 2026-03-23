@@ -25,6 +25,16 @@ python -m splitwise.pwa
 
 Open `http://127.0.0.1:8765` on desktop or mobile. The app exposes OAuth 1, OAuth 2, profile, friends, groups, expenses, comments, categories, currencies, and notifications workflows, and installs as a PWA with an offline-cached shell.
 
+## Local backend demo
+
+This repository also includes an in-memory backend that mirrors the SDK's Splitwise-style HTTP routes. Run it with:
+
+```sh
+python -m splitwise.backend
+```
+
+The backend listens on `http://127.0.0.1:8766` and serves `/api/v3.0/*`, `/authorize`, and `/oauth/*` endpoints. To point the SDK or the PWA at the local backend instead of Splitwise, set `SPLITWISE_BASE_URL`, `SPLITWISE_OAUTH_BASE_URL`, `SPLITWISE_BACKEND_BASE_URL`, and/or `SPLITWISE_BACKEND_OAUTH_BASE_URL` as needed.
+
 ## Installation
 
 Install using pip :
