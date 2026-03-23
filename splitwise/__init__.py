@@ -312,6 +312,8 @@ class Splitwise(object):
     def __normalize_base_url(base_url):
         if base_url is None:
             return None
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise ValueError("base URLs must start with http:// or https://")
         return base_url if base_url.endswith("/") else base_url + "/"
 
     def __resolve_url(self, url):

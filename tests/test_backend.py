@@ -72,7 +72,6 @@ class BackendAppTestCase(unittest.TestCase):
 def running_backend_server(app):
     server = make_server('127.0.0.1', 0, app)
     thread = threading.Thread(target=server.serve_forever)
-    thread.daemon = True
     thread.start()
     try:
         yield 'http://127.0.0.1:%s/' % server.server_port

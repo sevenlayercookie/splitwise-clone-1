@@ -306,6 +306,8 @@ class SplitwisePWAApp(object):
                 **kwargs
             )
         except TypeError:
+            # Preserve compatibility with injected SDK doubles or older Splitwise
+            # constructors that do not accept backend override kwargs.
             kwargs.pop("base_url", None)
             kwargs.pop("oauth_base_url", None)
             return self.splitwise_factory(
