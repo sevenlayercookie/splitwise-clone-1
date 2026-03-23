@@ -65,8 +65,8 @@ INDEX_HTML = """<!doctype html>
           <section class="toolbar-card panel" aria-label="Expense details">
             <button id="quick-date-button" class="toolbar-item toolbar-date" type="button">Today</button>
             <button id="quick-group-button" class="toolbar-item toolbar-group" type="button">No group</button>
-            <button id="quick-receipt-button" class="toolbar-item toolbar-icon" type="button" aria-label="Receipt">📷</button>
-            <button id="quick-note-button" class="toolbar-item toolbar-icon" type="button" aria-label="Notes">✎</button>
+            <button id="quick-receipt-button" class="toolbar-item toolbar-icon toolbar-receipt" type="button" aria-label="Receipt">📷</button>
+            <button id="quick-note-button" class="toolbar-item toolbar-icon toolbar-note" type="button" aria-label="Notes">✎</button>
           </section>
 
           <section class="panel" id="result-panel">
@@ -523,8 +523,8 @@ textarea::placeholder {
 
 .toolbar-date { color: #226ca7; }
 .toolbar-group { color: var(--orange); }
-.toolbar-icon:nth-of-type(3) { color: var(--purple); }
-.toolbar-icon:nth-of-type(4) { color: var(--teal); }
+.toolbar-receipt { color: var(--purple); }
+.toolbar-note { color: var(--teal); }
 
 .toolbar-icon {
   width: 3.3rem;
@@ -1208,7 +1208,7 @@ async function hydrateWorkspace(forceRefresh) {
   }
   state.hydrated = true;
   for (const [, operation] of QUICK_ACTIONS) {
-    await invokeOperation(operation, {}, { silent: true, preserveResult: true, dashboardOnly: true });
+    await invokeOperation(operation, {}, { silent: true, preserveResult: true });
   }
   renderParticipantChips();
   renderComposerState();
@@ -1348,18 +1348,19 @@ async function saveQuickExpense() {
 
   const currentUser = state.dashboard.getCurrentUser;
   const participants = state.dashboard.getFriends || [];
-  const selectedFriend = participants.find((friend) => friend.id === state.composer.friendId) || participants[0];
+  let selectedFriend = participants.find((friend) => friend.id === state.composer.friendId) || participants[0];
   if (!currentUser || !selectedFriend) {
     await hydrateWorkspace(true);
   }
   const owner = state.dashboard.getCurrentUser;
-  const companion = (state.dashboard.getFriends || []).find((friend) => friend.id === state.composer.friendId) || (state.dashboard.getFriends || [])[0];
+  selectedFriend = (state.dashboard.getFriends || []).find((friend) => friend.id === state.composer.friendId) || (state.dashboard.getFriends || [])[0];
+  const companion = selectedFriend;
   if (!owner || !companion) {
     showToast('Load at least one friend before creating an expense', 'error');
     return;
   }
 
-  const half = splitAmount(cost, 2);
+  const equalShare = splitAmount(cost, 2);
   const expense = {
     description,
     cost,
@@ -1368,8 +1369,8 @@ async function saveQuickExpense() {
     details: elements.quickNoteInput.value.trim() || undefined,
     date: `${state.composer.date}T12:00:00Z`,
     users: [
-      { id: owner.id, paid_share: formatMoney(cost), owed_share: half },
-      { id: companion.id, paid_share: '0.00', owed_share: half },
+      { id: owner.id, paid_share: formatMoney(cost), owed_share: equalShare },
+      { id: companion.id, paid_share: '0.00', owed_share: equalShare },
     ],
   };
   if (state.composer.groupId) {
@@ -1452,7 +1453,11 @@ function renderParticipantChips() {
     button.type = 'button';
     button.className = `participant-chip${state.composer.friendId === friend.id ? ' selected' : ''}`;
     button.dataset.friendId = String(friend.id);
-    const initials = [friend.first_name, friend.last_name].filter(Boolean).map((part) => part[0]).join('').slice(0, 2) || '?';
+    const initials = [friend.first_name, friend.last_name]
+      .filter((part) => part && part.length)
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2) || '?';
     button.innerHTML = `
       <span class="participant-avatar">${escapeHtml(initials.toUpperCase())}</span>
       <span>${escapeHtml(friend.first_name)}${friend.last_name ? ` ${escapeHtml(friend.last_name)}` : ''}</span>
@@ -1588,7 +1593,7 @@ function defaultCurrencyCode() {
 
 function splitAmount(value, count) {
   const amount = Number.parseFloat(value || '0');
-  if (!Number.isFinite(amount) || count <= 0) {
+  if (!Number.isFinite(amount) || !Number.isInteger(count) || count <= 0) {
     return '0.00';
   }
   return formatMoney((amount / count).toFixed(2));
