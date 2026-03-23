@@ -35,6 +35,31 @@ python -m splitwise.backend
 
 The backend listens on `http://127.0.0.1:8766` and serves `/api/v3.0/*`, `/authorize`, and `/oauth/*` endpoints. To point the SDK or the PWA at the local backend instead of Splitwise, set `SPLITWISE_BASE_URL`, `SPLITWISE_OAUTH_BASE_URL`, `SPLITWISE_BACKEND_BASE_URL`, and/or `SPLITWISE_BACKEND_OAUTH_BASE_URL` as needed.
 
+## Deploy the PWA to Vercel
+
+This repository includes a Vercel entrypoint for the local PWA/backend demo. The deployment serves the existing WSGI app from `splitwise.pwa`, including the mobile UI, `/api/v3.0/*`, `/authorize`, and `/oauth/*` routes.
+
+1. Push this branch to GitHub.
+2. In Vercel, click **Add New... → Project** and import this repository.
+3. Keep the project root as the repository root and let Vercel detect it as a Python project.
+4. Add any environment variables you want the demo to start with:
+   - `SPLITWISE_CONSUMER_KEY`
+   - `SPLITWISE_CONSUMER_SECRET`
+   - `SPLITWISE_BASE_URL`
+   - `SPLITWISE_OAUTH_BASE_URL`
+   - `SPLITWISE_BACKEND_BASE_URL`
+   - `SPLITWISE_BACKEND_OAUTH_BASE_URL`
+5. Deploy.
+
+If you prefer the CLI, run:
+
+```sh
+vercel
+vercel --prod
+```
+
+After deployment, open the Vercel URL in a browser or on mobile to demo the app.
+
 ## Installation
 
 Install using pip :

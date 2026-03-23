@@ -1,6 +1,7 @@
 import io
 import json
 import unittest
+from importlib import import_module
 from wsgiref.util import setup_testing_defaults
 
 from splitwise.expense import Expense
@@ -164,6 +165,10 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertEqual(status, '200 OK')
         self.assertTrue(config['configured'])
         self.assertEqual(config['sdk_methods'], SDK_METHODS)
+
+    def test_vercel_entrypoint_exports_wsgi_app(self):
+        module = import_module('api.index')
+        self.assertTrue(callable(module.app))
 
     def test_session_credentials_can_be_saved_and_cleared(self):
         app = create_app(RecordingSplitwise, {})
