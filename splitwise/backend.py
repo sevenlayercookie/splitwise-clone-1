@@ -1,6 +1,8 @@
 import json
 import logging
 import secrets
+import hashlib
+import hmac
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -19,8 +21,9 @@ class SplitwiseBackendApp(object):
     def __call__(self, environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "/") or "/"
+        current_user_id = self._resolve_current_user_id(environ)
         try:
-            status, payload, content_type = self._route(method, path, environ)
+            status, payload, content_type = self._route(method, path, environ, current_user_id)
             return self._respond(start_response, status, payload, content_type)
         except ValueError as exc:
             return self._respond_json(start_response, "400 Bad Request", {"errors": {"base": [str(exc)]}})
@@ -30,7 +33,7 @@ class SplitwiseBackendApp(object):
             LOGGER.exception("Unhandled backend error: %s", exc)
             return self._respond_json(start_response, "500 Internal Server Error", {"errors": {"base": ["Internal server error"]}})
 
-    def _route(self, method, path, environ):
+    def _route(self, method, path, environ, current_user_id):
         if method == "OPTIONS":
             return "200 OK", b"", "text/plain; charset=utf-8"
 
@@ -50,49 +53,49 @@ class SplitwiseBackendApp(object):
         endpoint = path[len("/api/v3.0/"):]
 
         if method == "GET" and endpoint == "get_current_user":
-            return "200 OK", {"user": self._current_user_payload(self.state["current_user_id"])}, "json"
+            return "200 OK", {"user": self._current_user_payload(current_user_id)}, "json"
         if method == "GET" and endpoint.startswith("get_user/"):
             user_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "user id")
             return "200 OK", {"user": self._user_payload(user_id)}, "json"
         if method == "POST" and endpoint == "update_user":
             return self._handle_update_user(params)
         if method == "GET" and endpoint == "get_friends":
-            return "200 OK", {"friends": self._list_friends()}, "json"
+            return "200 OK", {"friends": self._list_friends(current_user_id)}, "json"
         if method == "GET" and endpoint == "get_groups":
-            return "200 OK", {"groups": self._list_groups()}, "json"
+            return "200 OK", {"groups": self._list_groups(current_user_id)}, "json"
         if method == "GET" and endpoint.startswith("get_group/"):
             group_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "group id")
-            return "200 OK", {"group": self._group_payload(group_id)}, "json"
+            return "200 OK", {"group": self._group_payload(group_id, current_user_id)}, "json"
         if method == "POST" and endpoint == "create_group":
-            return self._handle_create_group(params)
+            return self._handle_create_group(params, current_user_id)
         if method == "POST" and endpoint == "add_user_to_group":
-            return self._handle_add_user_to_group(params)
+            return self._handle_add_user_to_group(params, current_user_id)
         if method == "POST" and endpoint.startswith("delete_group/"):
             group_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "group id")
-            return self._handle_delete_group(group_id)
+            return self._handle_delete_group(group_id, current_user_id)
         if method == "GET" and endpoint == "get_currencies":
             return "200 OK", {"currencies": list(self.state["currencies"])}, "json"
         if method == "GET" and endpoint == "get_categories":
             return "200 OK", {"categories": list(self.state["categories"])}, "json"
         if method == "GET" and endpoint == "get_expenses":
-            return self._handle_get_expenses(params)
+            return self._handle_get_expenses(params, current_user_id)
         if method == "GET" and endpoint.startswith("get_expense/"):
             expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
-            return "200 OK", {"expense": self._expense_payload(expense_id)}, "json"
+            return "200 OK", {"expense": self._expense_payload(expense_id, current_user_id)}, "json"
         if method == "POST" and endpoint == "create_expense":
-            return self._handle_create_expense(params)
+            return self._handle_create_expense(params, current_user_id)
         if method == "POST" and endpoint.startswith("update_expense/"):
             expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
-            return self._handle_update_expense(expense_id, params)
+            return self._handle_update_expense(expense_id, params, current_user_id)
         if method == "POST" and endpoint.startswith("delete_expense/"):
             expense_id = self._parse_int(endpoint.rsplit("/", 1)[-1], "expense id")
-            return self._handle_delete_expense(expense_id)
+            return self._handle_delete_expense(expense_id, current_user_id)
         if method == "GET" and endpoint == "get_comments":
             return self._handle_get_comments(params)
         if method == "POST" and endpoint == "create_comment":
-            return self._handle_create_comment(params)
+            return self._handle_create_comment(params, current_user_id)
         if method == "GET" and endpoint == "get_notifications":
-            return self._handle_get_notifications(params)
+            return self._handle_get_notifications(params, current_user_id)
 
         return "404 Not Found", {"errors": {"base": ["Route not found"]}}, "json"
 
@@ -141,9 +144,9 @@ class SplitwiseBackendApp(object):
             user["email"] = params.get("email")
         return "200 OK", {"user": self._current_user_payload(user_id), "errors": {}}, "json"
 
-    def _handle_create_group(self, params):
+    def _handle_create_group(self, params, current_user_id):
         group_id = self._next_id("group")
-        members = [self.state["current_user_id"]]
+        members = [current_user_id]
         index = 0
         while True:
             prefix = "users__%s__" % index
@@ -182,12 +185,14 @@ class SplitwiseBackendApp(object):
             "deleted": False,
         }
         self.state["groups"][group_id] = group
-        self._add_notification("Group '%s' created" % group["name"], "group", group_id)
-        return "200 OK", {"group": self._group_payload(group_id)}, "json"
+        self._add_notification("Group '%s' created" % group["name"], "group", group_id, current_user_id)
+        return "200 OK", {"group": self._group_payload(group_id, current_user_id)}, "json"
 
-    def _handle_add_user_to_group(self, params):
+    def _handle_add_user_to_group(self, params, current_user_id):
         group_id = self._parse_int(params.get("group_id"), "group id")
         group = self._require_group(group_id)
+        if current_user_id not in group["member_ids"]:
+            raise ValueError("Only group members can add new users")
         user_id = params.get("user_id") or params.get("id")
         if user_id is not None:
             user = self._ensure_user(
@@ -205,23 +210,25 @@ class SplitwiseBackendApp(object):
         if user["id"] not in group["member_ids"]:
             group["member_ids"].append(user["id"])
             group["updated_at"] = self._now()
-        self._add_notification("%s added to %s" % (user["first_name"], group["name"]), "group", group_id)
+        self._add_notification("%s added to %s" % (user["first_name"], group["name"]), "group", group_id, current_user_id)
         return "200 OK", {"success": True, "user": self._friend_payload(user["id"]), "errors": {}}, "json"
 
-    def _handle_delete_group(self, group_id):
+    def _handle_delete_group(self, group_id, current_user_id):
         if group_id == 0:
             raise ValueError("Group 0 cannot be deleted")
         group = self._require_group(group_id)
+        if current_user_id not in group["member_ids"]:
+            raise ValueError("Only group members can delete this group")
         group["deleted"] = True
         group["updated_at"] = self._now()
-        self._add_notification("Group '%s' deleted" % group["name"], "group", group_id)
+        self._add_notification("Group '%s' deleted" % group["name"], "group", group_id, current_user_id)
         return "200 OK", {"success": True, "errors": {}}, "json"
 
-    def _handle_get_expenses(self, params):
+    def _handle_get_expenses(self, params, current_user_id):
         expenses = []
         for expense in self.state["expenses"].values():
-            if self._matches_expense_filters(expense, params):
-                expenses.append(self._expense_payload(expense["id"]))
+            if self._matches_expense_filters(expense, params, current_user_id):
+                expenses.append(self._expense_payload(expense["id"], current_user_id))
         expenses.sort(key=lambda item: item["updated_at"], reverse=True)
         offset = int(params.get("offset") or 0)
         limit = params.get("limit")
@@ -232,27 +239,27 @@ class SplitwiseBackendApp(object):
             expenses = expenses[offset:]
         return "200 OK", {"expenses": expenses}, "json"
 
-    def _handle_create_expense(self, params):
+    def _handle_create_expense(self, params, current_user_id):
         expense_id = self._next_id("expense")
-        expense = self._build_expense_record(expense_id, params, existing=None)
+        expense = self._build_expense_record(expense_id, params, current_user_id, existing=None)
         self.state["expenses"][expense_id] = expense
-        self._add_notification("Expense '%s' created" % expense["description"], "expense", expense_id)
-        return "200 OK", {"expenses": [self._expense_payload(expense_id)], "errors": {}}, "json"
+        self._add_notification("Expense '%s' created" % expense["description"], "expense", expense_id, current_user_id)
+        return "200 OK", {"expenses": [self._expense_payload(expense_id, current_user_id)], "errors": {}}, "json"
 
-    def _handle_update_expense(self, expense_id, params):
+    def _handle_update_expense(self, expense_id, params, current_user_id):
         existing = self._require_expense(expense_id)
-        expense = self._build_expense_record(expense_id, params, existing=existing)
+        expense = self._build_expense_record(expense_id, params, current_user_id, existing=existing)
         expense["created_at"] = existing["created_at"]
         self.state["expenses"][expense_id] = expense
-        self._add_notification("Expense '%s' updated" % expense["description"], "expense", expense_id)
-        return "200 OK", {"expenses": [self._expense_payload(expense_id)], "errors": {}}, "json"
+        self._add_notification("Expense '%s' updated" % expense["description"], "expense", expense_id, current_user_id)
+        return "200 OK", {"expenses": [self._expense_payload(expense_id, current_user_id)], "errors": {}}, "json"
 
-    def _handle_delete_expense(self, expense_id):
+    def _handle_delete_expense(self, expense_id, current_user_id):
         expense = self._require_expense(expense_id)
         expense["deleted_at"] = self._now()
-        expense["deleted_by"] = self.state["current_user_id"]
+        expense["deleted_by"] = current_user_id
         expense["updated_at"] = expense["deleted_at"]
-        self._add_notification("Expense '%s' deleted" % expense["description"], "expense", expense_id)
+        self._add_notification("Expense '%s' deleted" % expense["description"], "expense", expense_id, current_user_id)
         return "200 OK", {"success": True, "errors": {}}, "json"
 
     def _handle_get_comments(self, params):
@@ -260,7 +267,7 @@ class SplitwiseBackendApp(object):
         comments = [self._comment_payload(comment_id) for comment_id in self.state["expense_comments"].get(expense_id, [])]
         return "200 OK", {"comments": comments}, "json"
 
-    def _handle_create_comment(self, params):
+    def _handle_create_comment(self, params, current_user_id):
         expense_id = self._parse_int(params.get("expense_id"), "expense id")
         self._require_expense(expense_id)
         content = params.get("content")
@@ -273,15 +280,19 @@ class SplitwiseBackendApp(object):
             "content": content,
             "created_at": self._now(),
             "deleted_at": None,
-            "user_id": self.state["current_user_id"],
+            "user_id": current_user_id,
         }
         self.state["comments"][comment_id] = comment
         self.state["expense_comments"].setdefault(expense_id, []).append(comment_id)
-        self._add_notification("Comment added to expense %s" % expense_id, "expense", expense_id)
+        self._add_notification("Comment added to expense %s" % expense_id, "expense", expense_id, current_user_id)
         return "200 OK", {"comment": self._comment_payload(comment_id), "errors": {}}, "json"
 
-    def _handle_get_notifications(self, params):
-        notifications = [self._notification_payload(item["id"]) for item in self.state["notifications"]]
+    def _handle_get_notifications(self, params, current_user_id):
+        notifications = [
+            self._notification_payload(item["id"])
+            for item in self.state["notifications"]
+            if item.get("created_by") == current_user_id or item.get("visible_to_all")
+        ]
         updated_since = params.get("updated_since")
         if updated_since:
             notifications = [item for item in notifications if item["created_at"] >= updated_since]
@@ -290,15 +301,15 @@ class SplitwiseBackendApp(object):
             notifications = notifications[:int(limit)]
         return "200 OK", {"notifications": notifications}, "json"
 
-    def _build_expense_record(self, expense_id, params, existing=None):
+    def _build_expense_record(self, expense_id, params, current_user_id, existing=None):
         if existing is None:
             created_at = self._now()
-            created_by = self.state["current_user_id"]
+            created_by = current_user_id
         else:
             created_at = existing["created_at"]
             created_by = existing["created_by"]
 
-        users = self._extract_expense_users(params, existing)
+        users = self._extract_expense_users(params, current_user_id, existing)
         if not users:
             raise ValueError("at least one expense user is required")
 
@@ -319,7 +330,9 @@ class SplitwiseBackendApp(object):
             group_id = existing.get("group_id")
         if group_id is not None:
             group_id = self._parse_int(group_id, "group id")
-            self._require_group(group_id)
+            group = self._require_group(group_id)
+            if current_user_id not in group["member_ids"]:
+                raise ValueError("You can only add expenses to your own groups")
 
         category_id = params.get("category_id")
         if category_id is None and existing is not None:
@@ -350,7 +363,7 @@ class SplitwiseBackendApp(object):
             "created_at": created_at,
             "created_by": created_by,
             "updated_at": self._now(),
-            "updated_by": self.state["current_user_id"],
+            "updated_by": current_user_id,
             "deleted_at": None if existing is None else existing.get("deleted_at"),
             "deleted_by": None if existing is None else existing.get("deleted_by"),
             "category_id": category_id,
@@ -360,7 +373,7 @@ class SplitwiseBackendApp(object):
         }
         return expense
 
-    def _extract_expense_users(self, params, existing=None):
+    def _extract_expense_users(self, params, current_user_id, existing=None):
         users = []
         index = 0
         while True:
@@ -379,10 +392,11 @@ class SplitwiseBackendApp(object):
             return users
         if existing is not None:
             return list(existing["user_shares"])
-        current_user_id = self.state["current_user_id"]
         return [{"user_id": current_user_id, "paid_share": self._money(params.get("cost", "0")), "owed_share": self._money(params.get("cost", "0"))}]
 
-    def _matches_expense_filters(self, expense, params):
+    def _matches_expense_filters(self, expense, params, current_user_id):
+        if not self._expense_visible_to_user(expense, current_user_id):
+            return False
         visible = params.get("visible")
         if visible is not None and self._parse_bool(visible, True) and expense.get("deleted_at"):
             return False
@@ -403,14 +417,17 @@ class SplitwiseBackendApp(object):
             return False
         return True
 
-    def _list_friends(self):
-        current_user_id = self.state["current_user_id"]
-        friend_ids = sorted(user_id for user_id in self.state["users"] if user_id != current_user_id)
-        return [self._friend_payload(user_id) for user_id in friend_ids]
+    def _list_friends(self, current_user_id):
+        friend_ids = sorted(self.state["friendships"].get(current_user_id, set()))
+        return [self._friend_payload(user_id, current_user_id) for user_id in friend_ids]
 
-    def _list_groups(self):
-        group_ids = sorted(group_id for group_id, group in self.state["groups"].items() if not group.get("deleted"))
-        return [self._group_payload(group_id) for group_id in group_ids]
+    def _list_groups(self, current_user_id):
+        group_ids = sorted(
+            group_id
+            for group_id, group in self.state["groups"].items()
+            if not group.get("deleted") and current_user_id in group["member_ids"]
+        )
+        return [self._group_payload(group_id, current_user_id) for group_id in group_ids]
 
     def _current_user_payload(self, user_id):
         user = self._require_user(user_id)
@@ -426,16 +443,20 @@ class SplitwiseBackendApp(object):
     def _user_payload(self, user_id):
         return self._user_base_payload(self._require_user(user_id))
 
-    def _friend_payload(self, user_id):
+    def _friend_payload(self, user_id, current_user_id=None):
         user = self._require_user(user_id)
         payload = self._user_base_payload(user)
         payload["updated_at"] = user["updated_at"]
-        payload["balance"] = self._friend_balances(user_id)
-        payload["groups"] = self._friend_groups(user_id)
+        payload["balance"] = self._friend_balances(user_id, current_user_id or self.state["current_user_id"])
+        payload["balances"] = payload["balance"]
+        payload["groups"] = self._friend_groups(user_id, current_user_id or self.state["current_user_id"])
         return payload
 
-    def _group_payload(self, group_id):
+    def _group_payload(self, group_id, current_user_id=None):
         group = self._require_group(group_id)
+        current_user_id = current_user_id or self.state["current_user_id"]
+        if current_user_id not in group["member_ids"]:
+            raise KeyError(group_id)
         repayments = self._group_repayments(group_id)
         return {
             "id": group["id"],
@@ -449,11 +470,14 @@ class SplitwiseBackendApp(object):
             "country_code": group.get("country_code") or "US",
             "original_debts": repayments,
             "simplified_debts": repayments,
-            "members": [self._friend_payload(member_id) for member_id in group["member_ids"]],
+            "members": [self._friend_payload(member_id, current_user_id) for member_id in group["member_ids"]],
         }
 
-    def _expense_payload(self, expense_id):
+    def _expense_payload(self, expense_id, current_user_id=None):
         expense = self._require_expense(expense_id)
+        current_user_id = current_user_id or self.state["current_user_id"]
+        if not self._expense_visible_to_user(expense, current_user_id):
+            raise KeyError(expense_id)
         users = []
         repayments = []
         creditors = []
@@ -556,9 +580,8 @@ class SplitwiseBackendApp(object):
             },
         }
 
-    def _friend_balances(self, user_id):
+    def _friend_balances(self, user_id, current_user_id):
         totals = defaultdict(Decimal)
-        current_user_id = self.state["current_user_id"]
         for expense in self.state["expenses"].values():
             if expense.get("deleted_at"):
                 continue
@@ -572,13 +595,14 @@ class SplitwiseBackendApp(object):
             return [{"currency_code": currency, "amount": self._money("0")}]
         return [{"currency_code": code, "amount": self._money(amount)} for code, amount in sorted(totals.items())]
 
-    def _friend_groups(self, user_id):
+    def _friend_groups(self, user_id, current_user_id):
         groups = []
         for group_id, group in self.state["groups"].items():
-            if group.get("deleted") or user_id not in group["member_ids"]:
+            if group.get("deleted") or user_id not in group["member_ids"] or current_user_id not in group["member_ids"]:
                 continue
             balances = self._group_member_balances(group_id)
             groups.append({
+                "id": group_id,
                 "group_id": group_id,
                 "balance": balances.get(user_id, [{"currency_code": self.state["currencies"][0]["currency_code"], "amount": self._money("0")}]),
             })
@@ -607,16 +631,115 @@ class SplitwiseBackendApp(object):
             repayments.extend(self._expense_payload(expense["id"])["repayments"])
         return repayments
 
-    def _add_notification(self, content, source_type, source_id):
+    def _add_notification(self, content, source_type, source_id, current_user_id, visible_to_all=False):
         self.state["notifications"].insert(0, {
             "id": self._next_id("notification"),
             "content": content,
             "type": 0,
             "created_at": self._now(),
-            "created_by": self.state["current_user_id"],
+            "created_by": current_user_id,
             "source_type": source_type.title(),
             "source_id": source_id,
+            "visible_to_all": visible_to_all,
         })
+
+    def register_account(self, first_name, email, password, last_name=None):
+        first_name = (first_name or "").strip()
+        if not first_name:
+            raise ValueError("first_name is required")
+        email = self._normalize_email(email)
+        if not email:
+            raise ValueError("email is required")
+        if self._find_user_by_email(email) is not None:
+            raise ValueError("An account with that email already exists")
+        password_hash = self._hash_password(password)
+        user = self._create_user(first_name=first_name, last_name=last_name, email=email)
+        self.state["password_hashes"][user["id"]] = password_hash
+        self.state["friendships"].setdefault(user["id"], set())
+        return self._user_payload(user["id"])
+
+    def authenticate_account(self, email, password):
+        email = self._normalize_email(email)
+        user = self._find_user_by_email(email)
+        if user is None:
+            raise ValueError("Invalid email or password")
+        password_hash = self.state["password_hashes"].get(user["id"])
+        if not password_hash or not self._verify_password(password, password_hash):
+            raise ValueError("Invalid email or password")
+        return self._user_payload(user["id"])
+
+    def add_friend(self, current_user_id, email=None, user_id=None):
+        if user_id is None:
+            email = self._normalize_email(email)
+            friend = self._find_user_by_email(email)
+        else:
+            friend = self.state["users"].get(int(user_id))
+        if friend is None:
+            raise ValueError("No account exists for that friend")
+        if friend["id"] == current_user_id:
+            raise ValueError("You cannot add yourself as a friend")
+        self.state["friendships"].setdefault(current_user_id, set()).add(friend["id"])
+        self.state["friendships"].setdefault(friend["id"], set()).add(current_user_id)
+        self._add_notification(
+            "You are now friends with %s" % friend["first_name"],
+            "friend",
+            friend["id"],
+            current_user_id,
+        )
+        return self._friend_payload(friend["id"], current_user_id)
+
+    def _resolve_current_user_id(self, environ):
+        raw_user_id = environ.get("HTTP_X_SPLITWISE_USER_ID")
+        if raw_user_id:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                user_id = None
+            if user_id in self.state["users"]:
+                return user_id
+        return self.state["current_user_id"]
+
+    def _expense_visible_to_user(self, expense, current_user_id):
+        if current_user_id in [item["user_id"] for item in expense["user_shares"]]:
+            return True
+        group_id = expense.get("group_id")
+        if group_id is None:
+            return False
+        group = self.state["groups"].get(group_id)
+        return bool(group and current_user_id in group["member_ids"] and not group.get("deleted"))
+
+    def _normalize_email(self, email):
+        return (email or "").strip().lower()
+
+    def _find_user_by_email(self, email):
+        if not email:
+            return None
+        for user in self.state["users"].values():
+            if self._normalize_email(user.get("email")) == email:
+                return user
+        return None
+
+    def _hash_password(self, password):
+        password = (password or "").strip()
+        if len(password) < 8:
+            raise ValueError("password must be at least 8 characters")
+        salt = secrets.token_hex(32)
+        iterations = 200000
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations).hex()
+        return "pbkdf2_sha256$%s$%s$%s" % (iterations, salt, digest)
+
+    def _verify_password(self, password, encoded):
+        try:
+            _, iterations, salt, expected = encoded.split("$", 3)
+        except ValueError:
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            (password or "").encode("utf-8"),
+            salt.encode("utf-8"),
+            int(iterations),
+        ).hex()
+        return hmac.compare_digest(digest, expected)
 
     def _read_params(self, environ):
         params = {}
@@ -783,6 +906,12 @@ def _default_state():
     state = {
         "current_user_id": 1,
         "users": users,
+        "password_hashes": {},
+        "friendships": {
+            1: {2, 3},
+            2: {1},
+            3: {1},
+        },
         "groups": {
             0: {
                 "id": 0,
@@ -850,7 +979,16 @@ def _default_state():
         },
         "expense_comments": {1: [1]},
         "notifications": [
-            {"id": 1, "content": "Apartment activity is up to date", "type": 0, "created_at": now, "created_by": 1, "source_type": "Group", "source_id": 1}
+            {
+                "id": 1,
+                "content": "Apartment activity is up to date",
+                "type": 0,
+                "created_at": now,
+                "created_by": 1,
+                "source_type": "Group",
+                "source_id": 1,
+                "visible_to_all": True,
+            }
         ],
         "categories": [
             {"id": 18, "name": "General", "subcategories": []},

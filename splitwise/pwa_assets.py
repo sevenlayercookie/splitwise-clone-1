@@ -35,6 +35,53 @@ INDEX_HTML = """<!doctype html>
           <button id="install-button" class="ghost compact-button hidden" type="button">Install</button>
         </section>
 
+        <section class="panel auth-panel" id="auth-panel">
+          <div class="panel-heading compact-heading">
+            <div>
+              <h2>Local account</h2>
+              <p>Create an account or sign in to use this app without Splitwise credentials.</p>
+            </div>
+          </div>
+          <div id="auth-logged-out" class="auth-stack">
+            <form id="register-form" class="form-stack auth-form">
+              <h3>Create account</h3>
+              <label>
+                First name
+                <input name="first_name" autocomplete="given-name" placeholder="Alex" required>
+              </label>
+              <label>
+                Last name
+                <input name="last_name" autocomplete="family-name" placeholder="Example">
+              </label>
+              <label>
+                Email
+                <input name="email" type="email" autocomplete="email" placeholder="alex@example.com" required>
+              </label>
+              <label>
+                Password
+                <input name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" required>
+              </label>
+              <button type="submit">Create local account</button>
+            </form>
+            <form id="login-form" class="form-stack auth-form">
+              <h3>Sign in</h3>
+              <label>
+                Email
+                <input name="email" type="email" autocomplete="email" placeholder="alex@example.com" required>
+              </label>
+              <label>
+                Password
+                <input name="password" type="password" autocomplete="current-password" placeholder="Your password" required>
+              </label>
+              <button type="submit">Sign in</button>
+            </form>
+          </div>
+          <div id="auth-logged-in" class="auth-state hidden">
+            <p id="auth-user-copy" class="auth-user-copy">Signed in.</p>
+            <button id="logout-button" class="ghost" type="button">Log out</button>
+          </div>
+        </section>
+
         <section class="participant-panel" id="dashboard-panel">
           <div class="participant-copy">
             <p id="participant-label" class="participant-label">With you and:</p>
@@ -91,6 +138,29 @@ INDEX_HTML = """<!doctype html>
             <section class="panel screen-card">
               <div class="panel-heading compact-heading">
                 <div>
+                  <h2>Create group</h2>
+                  <p>Start a new group and add existing friends immediately.</p>
+                </div>
+              </div>
+              <form id="create-group-form" class="form-stack compact-form">
+                <label>
+                  Group name
+                  <input name="name" autocomplete="off" placeholder="Weekend trip" required>
+                </label>
+                <label>
+                  Notes
+                  <input name="whiteboard" autocomplete="off" placeholder="Snacks, tickets, gas">
+                </label>
+                <div>
+                  <strong class="selection-label">Friends to include</strong>
+                  <div id="create-group-members" class="selection-list"></div>
+                </div>
+                <button type="submit">Create group</button>
+              </form>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
                   <h2>Members</h2>
                   <p>Balances mirror the local backend’s Splitwise-style payloads.</p>
                 </div>
@@ -125,6 +195,21 @@ INDEX_HTML = """<!doctype html>
             <section class="panel screen-card">
               <div class="panel-heading compact-heading">
                 <div>
+                  <h2>Add a friend</h2>
+                  <p>Invite an existing local account by email.</p>
+                </div>
+              </div>
+              <form id="friend-form" class="form-stack compact-form">
+                <label>
+                  Friend email
+                  <input name="email" type="email" autocomplete="email" placeholder="friend@example.com" required>
+                </label>
+                <button type="submit">Add friend</button>
+              </form>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
                   <h2>Friend balances</h2>
                   <p>Outstanding balances and per-group context for each friend.</p>
                 </div>
@@ -156,8 +241,8 @@ INDEX_HTML = """<!doctype html>
           <details class="panel developer-panel" id="credentials-panel">
             <summary class="developer-summary">
               <div>
-                <h2>Session credentials</h2>
-                <p>Store consumer keys, API key, and tokens for this browser tab.</p>
+                <h2>Advanced session credentials</h2>
+                <p>Optional developer tools for manual SDK sessions and token testing.</p>
               </div>
               <span class="chevron">⌄</span>
             </summary>
@@ -781,6 +866,64 @@ textarea::placeholder {
   gap: 0.75rem;
 }
 
+.auth-stack {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.auth-form h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.auth-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.auth-user-copy {
+  margin: 0;
+  color: var(--muted);
+}
+
+.compact-form {
+  gap: 0.7rem;
+}
+
+.selection-label {
+  display: block;
+  margin-bottom: 0.55rem;
+  font-size: 0.92rem;
+}
+
+.selection-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.selection-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8fafc;
+}
+
+.selection-option input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.selection-option span:last-child {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .coverage-board {
   grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
 }
@@ -852,6 +995,15 @@ textarea::placeholder {
 .operation-form textarea {
   min-height: 7rem;
   resize: vertical;
+}
+
+.auth-panel,
+#result-panel,
+.snapshot-panel,
+#credentials-panel,
+#coverage-panel,
+#lab-panel {
+  grid-column: span 2;
 }
 
 .operation-group {
@@ -934,6 +1086,10 @@ textarea::placeholder {
 
   .screen-panel > :first-child:last-child {
     grid-column: span 2;
+  }
+
+  .auth-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .composer-card,
@@ -1256,6 +1412,12 @@ function bindElements() {
   elements.connectivityStatus = document.getElementById('connectivity-status');
   elements.credentialsStatus = document.getElementById('credentials-status');
   elements.sessionSummary = document.getElementById('session-summary');
+  elements.authLoggedOut = document.getElementById('auth-logged-out');
+  elements.authLoggedIn = document.getElementById('auth-logged-in');
+  elements.authUserCopy = document.getElementById('auth-user-copy');
+  elements.registerForm = document.getElementById('register-form');
+  elements.loginForm = document.getElementById('login-form');
+  elements.logoutButton = document.getElementById('logout-button');
   elements.coverageStatus = document.getElementById('coverage-status');
   elements.coverageBoard = document.getElementById('coverage-board');
   elements.operationGroups = document.getElementById('operation-groups');
@@ -1286,10 +1448,13 @@ function bindElements() {
   elements.groupScreenTitle = document.getElementById('group-screen-title');
   elements.groupScreenSummary = document.getElementById('group-screen-summary');
   elements.groupBalanceSummary = document.getElementById('group-balance-summary');
+  elements.createGroupForm = document.getElementById('create-group-form');
+  elements.createGroupMembers = document.getElementById('create-group-members');
   elements.groupMemberList = document.getElementById('group-member-list');
   elements.groupExpenseList = document.getElementById('group-expense-list');
   elements.activityStats = document.getElementById('activity-stats');
   elements.activityFeed = document.getElementById('activity-feed');
+  elements.friendForm = document.getElementById('friend-form');
   elements.balanceList = document.getElementById('balance-list');
 }
 
@@ -1344,17 +1509,53 @@ function wireBaseInteractions() {
     }
   });
 
+  elements.registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const response = await request('/api/local/register', {
+      first_name: (form.get('first_name') || '').toString().trim(),
+      last_name: (form.get('last_name') || '').toString().trim(),
+      email: (form.get('email') || '').toString().trim(),
+      password: (form.get('password') || '').toString(),
+    });
+    if (response) {
+      resetWorkspaceCache();
+      formElement.reset();
+      showToast('Local account created', 'success');
+      await loadConfig();
+    }
+  });
+
+  elements.loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const response = await request('/api/local/login', {
+      email: (form.get('email') || '').toString().trim(),
+      password: (form.get('password') || '').toString(),
+    });
+    if (response) {
+      resetWorkspaceCache();
+      formElement.reset();
+      showToast('Signed in', 'success');
+      await loadConfig();
+    }
+  });
+
+  elements.logoutButton.addEventListener('click', async () => {
+    const response = await request('/api/local/logout', {});
+    if (response) {
+      resetWorkspaceCache();
+      showToast('Signed out', 'success');
+      await loadConfig();
+    }
+  });
+
   elements.clearSession.addEventListener('click', async () => {
     const response = await request('/api/session/clear', {});
     if (response) {
-      state.usedOperations.clear();
-      persistUsedOperations();
-      state.dashboard = {};
-      state.workspaceHydrated = false;
-      state.groupViewId = null;
-      state.composer.friendId = null;
-      state.composer.groupId = 0;
-      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      resetWorkspaceCache();
       showToast('Session cleared', 'success');
       renderCoverage();
       renderDashboardCache();
@@ -1366,6 +1567,58 @@ function wireBaseInteractions() {
   elements.refreshDashboard.addEventListener('click', async () => {
     await hydrateWorkspace(true);
     showToast('Dashboard refreshed', 'success');
+  });
+
+  elements.friendForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Add a friend')) {
+      return;
+    }
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const response = await request('/api/local/friends', {
+      email: (form.get('email') || '').toString().trim(),
+    });
+    if (response) {
+      formElement.reset();
+      await hydrateWorkspace(true);
+      showToast('Friend added', 'success');
+    }
+  });
+
+  elements.createGroupForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Create a group')) {
+      return;
+    }
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const friends = Array.from(elements.createGroupMembers.querySelectorAll('input[name="member_id"]:checked'))
+      .map((input) => availableFriends().find((friend) => friend.id === Number(input.value)))
+      .filter(Boolean)
+      .map((friend) => ({
+        id: friend.id,
+        first_name: friend.first_name,
+        last_name: friend.last_name,
+        email: friend.email,
+      }));
+    const response = await invokeOperation('createGroup', {
+      group: {
+        name: (form.get('name') || '').toString().trim(),
+        whiteboard: (form.get('whiteboard') || '').toString().trim() || undefined,
+        members: friends,
+      },
+    });
+    if (response) {
+      formElement.reset();
+      await hydrateWorkspace(true);
+      const group = response.data && response.data.group ? response.data.group : null;
+      if (group && group.id) {
+        state.groupViewId = group.id;
+        state.composer.groupId = group.id;
+      }
+      navigateToScreen('group');
+    }
   });
 
   elements.quickExpenseForm.addEventListener('submit', async (event) => {
@@ -1457,6 +1710,7 @@ async function loadConfig() {
   }
   state.config = config;
   renderSessionState();
+  renderAuthState();
   renderCoverage();
   renderDashboardCache();
   renderCurrentScreen();
@@ -1500,8 +1754,14 @@ function renderCurrentScreen() {
 
 function renderSessionState() {
   const summary = state.config && state.config.session ? state.config.session : {};
+  if (state.config && state.config.authenticated && state.config.local_user) {
+    elements.credentialsStatus.textContent = 'Signed in';
+    elements.sessionSummary.textContent = `Using local account ${displayName(state.config.local_user)}.`;
+    return;
+  }
   elements.credentialsStatus.textContent = state.config.configured ? 'Ready' : 'Needs setup';
   const parts = [];
+  if (summary.local_account) parts.push('local account ready');
   if (summary.consumer_key) parts.push('consumer key saved');
   if (summary.consumer_secret) parts.push('consumer secret saved');
   if (summary.api_key) parts.push('API key saved');
@@ -1509,7 +1769,19 @@ function renderSessionState() {
   if (summary.oauth2_access_token) parts.push('OAuth 2 token saved');
   elements.sessionSummary.textContent = parts.length
     ? parts.join(' • ')
-    : 'Save credentials below to create expenses from this device.';
+    : 'Create a local account to use the app, or save advanced credentials below.';
+}
+
+function renderAuthState() {
+  const authenticated = Boolean(state.config && state.config.authenticated && state.config.local_user);
+  elements.authLoggedOut.classList.toggle('hidden', authenticated);
+  elements.authLoggedIn.classList.toggle('hidden', !authenticated);
+  if (authenticated) {
+    const user = state.config.local_user;
+    elements.authUserCopy.textContent = `${displayName(user)} • ${user.email || 'Local account'}`;
+  } else {
+    elements.authUserCopy.textContent = 'Signed out.';
+  }
 }
 
 function renderCoverage() {
@@ -1616,9 +1888,12 @@ function normalizeScalar(value) {
 }
 
 async function saveQuickExpense() {
+  if (!ensureAuthenticated('Create expenses', true)) {
+    showToast('Create a local account or sign in before creating expenses', 'error');
+    return;
+  }
   if (!state.config || !state.config.configured) {
-    showToast('Save credentials before creating expenses', 'error');
-    elements.credentialsPanel.open = true;
+    showToast('The app is still loading your local account session', 'error');
     return;
   }
 
@@ -1707,6 +1982,10 @@ async function invokeOperation(operation, payload = {}, options = {}) {
 
 function renderParticipantChips() {
   elements.dashboardActions.innerHTML = '';
+  if (!ensureAuthenticated(null, true)) {
+    renderChipPlaceholder('Create a local account to get started');
+    return;
+  }
   if (state.screen === 'group') {
     renderGroupChips();
     return;
@@ -1800,6 +2079,7 @@ function renderComposerState() {
 }
 
 function renderGroupScreen() {
+  renderGroupComposer();
   const group = currentGroup();
   if (!group) {
     elements.groupScreenTitle.textContent = 'No group data yet';
@@ -1833,9 +2113,9 @@ function renderGroupScreen() {
               <strong>${escapeHtml(displayName(member))}</strong>
               <span class="row-meta">${member.email ? escapeHtml(member.email) : 'Group member'}</span>
             </div>
-            <div class="amount-copy ${balanceClass(member.balances)}">
-              <strong>${escapeHtml(formatBalance(member.balances))}</strong>
-              <span class="row-meta">${escapeHtml(balanceLabel(member.balances))}</span>
+            <div class="amount-copy ${balanceClass(member.balances || member.balance)}">
+              <strong>${escapeHtml(formatBalance(member.balances || member.balance))}</strong>
+              <span class="row-meta">${escapeHtml(balanceLabel(member.balances || member.balance))}</span>
             </div>
           </div>
         </article>
@@ -1898,7 +2178,7 @@ function renderActivityScreen() {
 }
 
 function renderBalancesScreen() {
-  const friends = Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
+  const friends = availableFriends();
   elements.balanceList.innerHTML = friends.length
     ? friends.slice(0, 8).map((friend) => `
         <article class="list-row">
@@ -1908,12 +2188,12 @@ function renderBalancesScreen() {
               <strong>${escapeHtml(displayName(friend))}</strong>
               <span class="row-meta">${(friend.groups || []).length} shared groups</span>
               <div class="inline-badges">
-                ${(friend.groups || []).slice(0, 3).map((group) => `<span class="mini-badge">${escapeHtml(groupName(group.id))}</span>`).join('')}
+                ${(friend.groups || []).slice(0, 3).map((group) => `<span class="mini-badge">${escapeHtml(groupName(group.group_id || group.id))}</span>`).join('')}
               </div>
             </div>
-            <div class="amount-copy ${balanceClass(friend.balances)}">
-              <strong>${escapeHtml(formatBalance(friend.balances))}</strong>
-              <span class="row-meta">${escapeHtml(balanceLabel(friend.balances))}</span>
+            <div class="amount-copy ${balanceClass(friend.balances || friend.balance)}">
+              <strong>${escapeHtml(formatBalance(friend.balances || friend.balance))}</strong>
+              <span class="row-meta">${escapeHtml(balanceLabel(friend.balances || friend.balance))}</span>
             </div>
           </div>
         </article>
@@ -2026,6 +2306,10 @@ function availableGroups() {
   return Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups.filter((group) => group.id !== 0) : [];
 }
 
+function availableFriends() {
+  return Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
+}
+
 function currentGroup() {
   const groups = availableGroups();
   if (!groups.length) {
@@ -2038,8 +2322,21 @@ function currentGroup() {
 }
 
 function selectedFriend() {
-  const friends = Array.isArray(state.dashboard.getFriends) ? state.dashboard.getFriends : [];
+  const friends = availableFriends();
   return friends.find((friend) => friend.id === state.composer.friendId) || friends[0] || null;
+}
+
+function renderGroupComposer() {
+  const friends = availableFriends();
+  elements.createGroupMembers.innerHTML = friends.length
+    ? friends.map((friend) => `
+        <label class="selection-option">
+          <input type="checkbox" name="member_id" value="${friend.id}">
+          <strong>${escapeHtml(displayName(friend))}</strong>
+          <span>${escapeHtml(friend.email || 'Local friend')}</span>
+        </label>
+      `).join('')
+    : '<p class="empty-copy">Add friends first to include them in a group.</p>';
 }
 
 function displayName(person) {
@@ -2147,6 +2444,25 @@ function formatMoney(value) {
     return '0.00';
   }
   return number.toFixed(2);
+}
+
+function resetWorkspaceCache() {
+  state.usedOperations.clear();
+  persistUsedOperations();
+  state.dashboard = {};
+  state.workspaceHydrated = false;
+  state.groupViewId = null;
+  state.composer.friendId = null;
+  state.composer.groupId = 0;
+  localStorage.removeItem(DASHBOARD_CACHE_KEY);
+}
+
+function ensureAuthenticated(actionLabel, silent = false) {
+  const ready = Boolean(state.config && state.config.authenticated);
+  if (!ready && !silent) {
+    showToast(`${actionLabel || 'Use the app'} after signing in or creating a local account`, 'error');
+  }
+  return ready;
 }
 
 async function request(url, payload = {}, silent = false) {

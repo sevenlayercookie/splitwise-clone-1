@@ -311,6 +311,95 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertEqual(member.id, 7)
         self.assertEqual(group_id, 11)
 
+    def test_local_account_flow_supports_register_login_friends_and_groups(self):
+        app = create_app(environment={})
+
+        status, _, register_one, cookie_one = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={
+                'first_name': 'Taylor',
+                'last_name': 'Tester',
+                'email': 'taylor@example.com',
+                'password': 'password123',
+            },
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(register_one['user']['email'], 'taylor@example.com')
+
+        status, _, _, cookie_one = self._request(app, 'POST', '/api/local/logout', payload={}, cookie=cookie_one)
+        self.assertEqual(status, '200 OK')
+
+        status, _, login_one, cookie_one = self._request(
+            app,
+            'POST',
+            '/api/local/login',
+            payload={'email': 'taylor@example.com', 'password': 'password123'},
+            cookie=cookie_one,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(login_one['user']['first_name'], 'Taylor')
+
+        status, _, register_two, _ = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={
+                'first_name': 'Jordan',
+                'email': 'jordan@example.com',
+                'password': 'password123',
+            },
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, added_friend, cookie_one = self._request(
+            app,
+            'POST',
+            '/api/local/friends',
+            payload={'email': 'jordan@example.com'},
+            cookie=cookie_one,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(added_friend['friend']['email'], 'jordan@example.com')
+
+        status, _, friends_response, cookie_one = self._request(
+            app,
+            'POST',
+            '/api/operations/getFriends',
+            payload={},
+            cookie=cookie_one,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual([item['email'] for item in friends_response['data']], ['jordan@example.com'])
+
+        status, _, create_group, cookie_one = self._request(
+            app,
+            'POST',
+            '/api/operations/createGroup',
+            payload={
+                'group': {
+                    'name': 'Demo group',
+                    'members': [{'id': register_two['user']['id'], 'email': 'jordan@example.com', 'first_name': 'Jordan'}],
+                },
+            },
+            cookie=cookie_one,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(create_group['data']['group']['name'], 'Demo group')
+        self.assertEqual(len(create_group['data']['group']['members']), 2)
+        self.assertEqual(create_group['data']['group']['members'][1]['email'], 'jordan@example.com')
+
+        status, _, groups_response, _ = self._request(
+            app,
+            'POST',
+            '/api/operations/getGroups',
+            payload={},
+            cookie=cookie_one,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(any(group['name'] == 'Demo group' for group in groups_response['data']))
+
 
 if __name__ == '__main__':
     unittest.main()

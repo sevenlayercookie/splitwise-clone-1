@@ -15,7 +15,7 @@ from splitwise.user import User
 
 
 class BackendAppTestCase(unittest.TestCase):
-    def _request(self, app, method, path, payload=None, content_type='application/json'):
+    def _request(self, app, method, path, payload=None, content_type='application/json', headers=None):
         body = b''
         if payload is not None:
             if content_type == 'application/json':
@@ -33,6 +33,8 @@ class BackendAppTestCase(unittest.TestCase):
         environ['CONTENT_LENGTH'] = str(len(body))
         environ['CONTENT_TYPE'] = content_type
         environ['wsgi.input'] = io.BytesIO(body)
+        for key, value in (headers or {}).items():
+            environ[key] = value
 
         captured = {}
 
@@ -66,6 +68,30 @@ class BackendAppTestCase(unittest.TestCase):
         status, _, current = self._request(app, 'GET', '/api/v3.0/get_current_user')
         self.assertEqual(status, '200 OK')
         self.assertEqual(current['user']['id'], 1)
+
+    def test_backend_can_scope_current_user_and_friendships(self):
+        app = create_backend_app()
+        account = app.register_account('Taylor', 'taylor@example.com', 'password123')
+        friend = app.add_friend(account['id'], email='sam@example.com')
+        self.assertEqual(friend['email'], 'sam@example.com')
+
+        status, _, current = self._request(
+            app,
+            'GET',
+            '/api/v3.0/get_current_user',
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(account['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(current['user']['email'], 'taylor@example.com')
+
+        status, _, friends = self._request(
+            app,
+            'GET',
+            '/api/v3.0/get_friends',
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(account['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual([item['email'] for item in friends['friends']], ['sam@example.com'])
 
 
 @contextmanager

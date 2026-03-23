@@ -1,8 +1,11 @@
+import io
 import json
 import os
 import secrets
 from http import cookies
+from urllib.parse import urlencode
 from wsgiref.simple_server import make_server
+from wsgiref.util import setup_testing_defaults
 
 from splitwise import Splitwise
 from splitwise.backend import create_backend_app
@@ -62,6 +65,213 @@ ERROR_STATUS = {
 }
 
 
+class LocalSplitwiseAdapter(object):
+    def __init__(self, backend_app, current_user_id, origin):
+        self.backend_app = backend_app
+        self.current_user_id = current_user_id
+        self.origin = origin if origin.endswith("/") else origin + "/"
+
+    def getAuthorizeURL(self):
+        content = self._request("POST", "/api/v3.0/get_request_token")
+        credentials = self._parse_form_payload(content)
+        return "%sauthorize?oauth_token=%s" % (self.origin, credentials["oauth_token"]), credentials["oauth_token_secret"]
+
+    def getAccessToken(self, oauth_token, oauth_token_secret, oauth_verifier):
+        del oauth_token, oauth_token_secret, oauth_verifier
+        content = self._request("POST", "/api/v3.0/get_access_token")
+        credentials = self._parse_form_payload(content)
+        return credentials
+
+    def getOAuth2AuthorizeURL(self, redirect_uri, state=None):
+        state = state or secrets.token_urlsafe(12)
+        query = urlencode({"client_id": "local-demo", "redirect_uri": redirect_uri, "state": state})
+        return "%soauth/authorize?%s" % (self.origin, query), state
+
+    def getOAuth2AccessToken(self, code, redirect_uri):
+        return self._request("POST", "/oauth/token", {"code": code, "redirect_uri": redirect_uri})
+
+    def getCurrentUser(self):
+        return self._request("GET", "/api/v3.0/get_current_user")["user"]
+
+    def getUser(self, id):
+        return self._request("GET", "/api/v3.0/get_user/%s" % id)["user"]
+
+    def updateUser(self, user):
+        payload = self._request("POST", "/api/v3.0/update_user", self._user_payload(user))
+        return payload["user"], payload.get("errors") or None
+
+    def getFriends(self):
+        return self._request("GET", "/api/v3.0/get_friends")["friends"]
+
+    def getGroups(self):
+        return self._request("GET", "/api/v3.0/get_groups")["groups"]
+
+    def getGroup(self, id=0):
+        return self._request("GET", "/api/v3.0/get_group/%s" % id)["group"]
+
+    def createGroup(self, group):
+        payload = self._request("POST", "/api/v3.0/create_group", self._group_payload(group))
+        return payload["group"], payload.get("errors") or None
+
+    def deleteGroup(self, id):
+        payload = self._request("POST", "/api/v3.0/delete_group/%s" % id)
+        return payload["success"], payload.get("errors") or None
+
+    def addUserToGroup(self, user, group_id):
+        payload = self._request(
+            "POST",
+            "/api/v3.0/add_user_to_group",
+            dict(self._user_payload(user), group_id=group_id),
+        )
+        return payload["success"], payload["user"], payload.get("errors") or None
+
+    def getExpenses(self, **filters):
+        query = urlencode(filters)
+        path = "/api/v3.0/get_expenses"
+        if query:
+            path += "?" + query
+        return self._request("GET", path)["expenses"]
+
+    def getExpense(self, id):
+        return self._request("GET", "/api/v3.0/get_expense/%s" % id)["expense"]
+
+    def createExpense(self, expense):
+        payload = self._request("POST", "/api/v3.0/create_expense", self._expense_payload(expense))
+        return payload["expenses"][0], payload.get("errors") or None
+
+    def updateExpense(self, expense):
+        payload = self._request(
+            "POST",
+            "/api/v3.0/update_expense/%s" % expense.id,
+            self._expense_payload(expense),
+        )
+        return payload["expenses"][0], payload.get("errors") or None
+
+    def deleteExpense(self, id):
+        payload = self._request("POST", "/api/v3.0/delete_expense/%s" % id)
+        return payload["success"], payload.get("errors") or None
+
+    def getCurrencies(self):
+        return self._request("GET", "/api/v3.0/get_currencies")["currencies"]
+
+    def getCategories(self):
+        return self._request("GET", "/api/v3.0/get_categories")["categories"]
+
+    def getComments(self, expense_id):
+        return self._request("GET", "/api/v3.0/get_comments?expense_id=%s" % expense_id)["comments"]
+
+    def createComment(self, expense_id, content):
+        payload = self._request("POST", "/api/v3.0/create_comment", {"expense_id": expense_id, "content": content})
+        return payload["comment"], payload.get("errors") or None
+
+    def getNotifications(self, updated_since=None, limit=None):
+        query = {}
+        if updated_since is not None:
+            query["updated_since"] = updated_since
+        if limit is not None:
+            query["limit"] = limit
+        path = "/api/v3.0/get_notifications"
+        if query:
+            path += "?" + urlencode(query)
+        return self._request("GET", path)["notifications"]
+
+    def _request(self, method, path, payload=None):
+        body = b""
+        if payload is not None and method == "POST":
+            body = json.dumps(payload).encode("utf-8")
+        environ = {}
+        setup_testing_defaults(environ)
+        environ["REQUEST_METHOD"] = method
+        environ["PATH_INFO"] = path
+        environ["QUERY_STRING"] = ""
+        if "?" in path:
+            environ["PATH_INFO"], environ["QUERY_STRING"] = path.split("?", 1)
+        environ["CONTENT_LENGTH"] = str(len(body))
+        environ["CONTENT_TYPE"] = "application/json"
+        environ["wsgi.input"] = io.BytesIO(body)
+        environ["HTTP_X_SPLITWISE_USER_ID"] = str(self.current_user_id)
+
+        captured = {}
+
+        def start_response(status, headers):
+            captured["status"] = status
+            captured["headers"] = dict(headers)
+
+        raw = b"".join(self.backend_app(environ, start_response))
+        content_type = captured["headers"].get("Content-Type", "")
+        decoded = raw.decode("utf-8")
+        if "application/json" in content_type:
+            parsed = json.loads(decoded)
+            if not captured["status"].startswith("200"):
+                raise ValueError(parsed.get("error") or parsed.get("errors", {}).get("base", ["Request failed"])[0])
+            return parsed
+        if not captured["status"].startswith("200"):
+            raise ValueError(decoded or "Request failed")
+        return decoded
+
+    def _parse_form_payload(self, content):
+        values = {}
+        for part in content.split("&"):
+            key, raw_value = part.split("=", 1)
+            values[key] = raw_value
+        return values
+
+    def _user_payload(self, user):
+        payload = {}
+        if getattr(user, "id", None) is not None:
+            payload["id"] = user.id
+        if getattr(user, "first_name", None) is not None:
+            payload["first_name"] = user.first_name
+        if getattr(user, "last_name", None) is not None:
+            payload["last_name"] = user.last_name
+        if getattr(user, "email", None) is not None:
+            payload["email"] = user.email
+        return payload
+
+    def _group_payload(self, group):
+        payload = {}
+        if getattr(group, "name", None) is not None:
+            payload["name"] = group.name
+        if getattr(group, "group_type", None) is not None:
+            payload["group_type"] = group.group_type
+        if getattr(group, "whiteboard", None) is not None:
+            payload["whiteboard"] = group.whiteboard
+        if getattr(group, "country_code", None) is not None:
+            payload["country_code"] = group.country_code
+        members = []
+        for member in getattr(group, "members", []) or []:
+            members.append(self._user_payload(member))
+        for index, member in enumerate(members):
+            for key, value in member.items():
+                payload["users__%s__%s" % (index, key)] = value
+        return payload
+
+    def _expense_payload(self, expense):
+        payload = {}
+        for field in ("id", "group_id", "description", "cost", "payment", "friendship_id", "date", "currency_code", "details"):
+            value = getattr(expense, field, None)
+            if value is not None:
+                payload[field] = value
+        if getattr(expense, "category", None) is not None and getattr(expense.category, "id", None) is not None:
+            payload["category_id"] = expense.category.id
+        if getattr(expense, "split_equally", None) is not None:
+            payload["split_equally"] = expense.split_equally
+        users = []
+        for user in getattr(expense, "users", []) or []:
+            user_payload = {}
+            if getattr(user, "id", None) is not None:
+                user_payload["user_id"] = user.id
+            if getattr(user, "paid_share", None) is not None:
+                user_payload["paid_share"] = user.paid_share
+            if getattr(user, "owed_share", None) is not None:
+                user_payload["owed_share"] = user.owed_share
+            users.append(user_payload)
+        for index, user in enumerate(users):
+            for key, value in user.items():
+                payload["users__%s__%s" % (index, key)] = value
+        return payload
+
+
 class SplitwisePWAApp(object):
     def __init__(self, splitwise_factory=Splitwise, environment=None):
         self.splitwise_factory = splitwise_factory
@@ -104,21 +314,24 @@ class SplitwisePWAApp(object):
 
     def _route_request(self, method, path, environ, session, session_id):
         if path.startswith("/api/v3.0/") or path in ("/authorize", "/oauth/authorize", "/oauth/token"):
-            return self._delegate_to_backend(environ)
+            return self._delegate_to_backend(environ, session)
         if method == "GET":
             return self._handle_get(path, session, session_id)
         if method == "POST":
             return self._handle_post(path, environ, session)
         return "404 Not Found", {"error": "Route not found"}, "json"
 
-    def _delegate_to_backend(self, environ):
+    def _delegate_to_backend(self, environ, session):
         captured = {}
+        delegated_environ = dict(environ)
+        if session.get("local_user_id") and "HTTP_X_SPLITWISE_USER_ID" not in delegated_environ:
+            delegated_environ["HTTP_X_SPLITWISE_USER_ID"] = str(session["local_user_id"])
 
         def start_response(status, response_headers):
             captured["status"] = status
             captured["headers"] = response_headers
 
-        body = b"".join(self.backend_app(environ, start_response))
+        body = b"".join(self.backend_app(delegated_environ, start_response))
         content_type = "application/octet-stream"
         for header, value in captured.get("headers", []):
             if header.lower() == "content-type":
@@ -137,12 +350,26 @@ class SplitwisePWAApp(object):
                 "sdk_methods": SDK_METHODS,
                 "session": self._session_summary(session),
                 "session_id": session_id,
+                "authenticated": bool(session.get("local_user_id")),
+                "local_user": self._serialize(self._local_user(session)),
             }, "json"
 
         return "404 Not Found", {"error": "Route not found"}, "json"
 
     def _handle_post(self, path, environ, session):
         payload = self._read_json(environ)
+        if path == "/api/local/register":
+            return "200 OK", self._handle_local_register(payload, session), "json"
+
+        if path == "/api/local/login":
+            return "200 OK", self._handle_local_login(payload, session), "json"
+
+        if path == "/api/local/logout":
+            return "200 OK", self._handle_local_logout(session), "json"
+
+        if path == "/api/local/friends":
+            return "200 OK", self._handle_local_add_friend(payload, session), "json"
+
         if path == "/api/session":
             self._merge_session(session, payload)
             return "200 OK", {"ok": True, "session": self._session_summary(session)}, "json"
@@ -158,13 +385,13 @@ class SplitwisePWAApp(object):
             return "200 OK", {
                 "ok": True,
                 "operation": operation,
-                "data": self._dispatch_operation(operation, payload, session),
+                "data": self._dispatch_operation(operation, payload, session, environ),
             }, "json"
 
         return "404 Not Found", {"error": "Route not found"}, "json"
 
-    def _dispatch_operation(self, operation, payload, session):
-        client = self._build_client(session)
+    def _dispatch_operation(self, operation, payload, session, environ):
+        client = self._build_client(session, environ)
         handlers = {
             "getAuthorizeURL": self._op_get_authorize_url,
             "getAccessToken": self._op_get_access_token,
@@ -283,7 +510,13 @@ class SplitwisePWAApp(object):
     def _op_get_notifications(self, client, payload, session):
         return self._serialize(client.getNotifications(payload.get("updated_since"), payload.get("limit")))
 
-    def _build_client(self, session):
+    def _build_client(self, session, environ):
+        if session.get("local_user_id"):
+            return LocalSplitwiseAdapter(
+                self.backend_app,
+                session["local_user_id"],
+                self._request_origin(environ),
+            )
         consumer_key = session.get("consumer_key") or self.environment.get("SPLITWISE_CONSUMER_KEY")
         consumer_secret = session.get("consumer_secret") or self.environment.get("SPLITWISE_CONSUMER_SECRET")
         if not consumer_key or not consumer_secret:
@@ -317,6 +550,8 @@ class SplitwisePWAApp(object):
             )
 
     def _has_client_credentials(self, session):
+        if session.get("local_user_id"):
+            return True
         return bool(
             session.get("consumer_key") or self.environment.get("SPLITWISE_CONSUMER_KEY")
         ) and bool(
@@ -432,12 +667,54 @@ class SplitwisePWAApp(object):
 
     def _session_summary(self, session):
         return {
+            "local_account": bool(session.get("local_user_id")),
             "consumer_key": bool(session.get("consumer_key") or self.environment.get("SPLITWISE_CONSUMER_KEY")),
             "consumer_secret": bool(session.get("consumer_secret") or self.environment.get("SPLITWISE_CONSUMER_SECRET")),
             "api_key": bool(session.get("api_key")),
             "access_token": bool(session.get("access_token")),
             "oauth2_access_token": bool(session.get("oauth2_access_token")),
         }
+
+    def _handle_local_register(self, payload, session):
+        user = self.backend_app.register_account(
+            payload.get("first_name"),
+            payload.get("email"),
+            payload.get("password"),
+            last_name=payload.get("last_name"),
+        )
+        session["local_user_id"] = user["id"]
+        return {"ok": True, "user": user}
+
+    def _handle_local_login(self, payload, session):
+        user = self.backend_app.authenticate_account(payload.get("email"), payload.get("password"))
+        session["local_user_id"] = user["id"]
+        return {"ok": True, "user": user}
+
+    def _handle_local_logout(self, session):
+        session.pop("local_user_id", None)
+        return {"ok": True}
+
+    def _handle_local_add_friend(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        friend = self.backend_app.add_friend(user_id, email=payload.get("email"), user_id=payload.get("user_id"))
+        return {"ok": True, "friend": friend}
+
+    def _require_local_user_id(self, session):
+        user_id = session.get("local_user_id")
+        if not user_id:
+            raise ValueError("Sign in to a local account first")
+        return user_id
+
+    def _local_user(self, session):
+        user_id = session.get("local_user_id")
+        if not user_id:
+            return None
+        return self.backend_app.state["users"].get(user_id)
+
+    def _request_origin(self, environ):
+        scheme = environ.get("wsgi.url_scheme", "http")
+        host = environ.get("HTTP_HOST") or environ.get("SERVER_NAME") or "127.0.0.1"
+        return "%s://%s/" % (scheme, host)
 
     def _respond(self, start_response, status, body, headers, content_type):
         payload = body.encode("utf-8") if isinstance(body, str) else body
