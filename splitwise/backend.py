@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -7,6 +8,8 @@ from email.parser import BytesParser
 from email.policy import default
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SplitwiseBackendApp(object):
@@ -24,6 +27,7 @@ class SplitwiseBackendApp(object):
         except KeyError:
             return self._respond_json(start_response, "404 Not Found", {"errors": {"base": ["Resource not found"]}})
         except Exception as exc:  # pragma: no cover - protective fallback
+            LOGGER.exception("Unhandled backend error: %s", exc)
             return self._respond_json(start_response, "500 Internal Server Error", {"errors": {"base": ["Internal server error"]}})
 
     def _route(self, method, path, environ):

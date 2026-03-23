@@ -309,10 +309,10 @@ class SplitwisePWAApp(object):
             kwargs.pop("base_url", None)
             kwargs.pop("oauth_base_url", None)
             return self.splitwise_factory(
-            consumer_key,
-            consumer_secret,
-            **kwargs
-        )
+                consumer_key,
+                consumer_secret,
+                **kwargs
+            )
 
     def _has_client_credentials(self, session):
         return bool(
