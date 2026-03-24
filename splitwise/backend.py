@@ -309,9 +309,23 @@ class SplitwiseBackendApp(object):
             created_at = existing["created_at"]
             created_by = existing["created_by"]
 
+        group_id = params.get("group_id")
+        if group_id is None and existing is not None:
+            group_id = existing.get("group_id")
+        group = None
+        if group_id is not None:
+            group_id = self._parse_int(group_id, "group id")
+            group = self._require_group(group_id)
+            if current_user_id not in group["member_ids"]:
+                raise ValueError("You can only add expenses to your own groups")
+
         users = self._extract_expense_users(params, current_user_id, existing)
         if not users:
             raise ValueError("at least one expense user is required")
+        if group is not None:
+            member_ids = set(group["member_ids"])
+            if any(share["user_id"] not in member_ids for share in users):
+                raise ValueError("Expense users must belong to the selected group")
 
         description = params.get("description")
         if description is None and existing is not None:
@@ -325,14 +339,24 @@ class SplitwiseBackendApp(object):
         if cost is None:
             raise ValueError("cost is required")
 
-        group_id = params.get("group_id")
-        if group_id is None and existing is not None:
-            group_id = existing.get("group_id")
-        if group_id is not None:
-            group_id = self._parse_int(group_id, "group id")
-            group = self._require_group(group_id)
-            if current_user_id not in group["member_ids"]:
-                raise ValueError("You can only add expenses to your own groups")
+        split_method = self._normalize_split_method(
+            params.get("split_method"),
+            existing=existing,
+            split_equally=params.get("split_equally"),
+        )
+        participants = self._extract_expense_participants(
+            params,
+            users,
+            group_member_ids=(group or {}).get("member_ids"),
+            existing=existing,
+        )
+        payers = self._extract_expense_payers(params, users, existing=existing)
+        if group is not None:
+            member_ids = set(group["member_ids"])
+            if any(item["user_id"] not in member_ids for item in participants):
+                raise ValueError("Expense participants must belong to the selected group")
+            if any(item["user_id"] not in member_ids for item in payers):
+                raise ValueError("Expense payers must belong to the selected group")
 
         category_id = params.get("category_id")
         if category_id is None and existing is not None:
@@ -388,7 +412,10 @@ class SplitwiseBackendApp(object):
             "category_id": category_id,
             "receipt": {"original": None, "large": None},
             "user_shares": users,
-            "split_equally": self._parse_bool(params.get("split_equally"), (existing or {}).get("split_equally", False)),
+            "split_equally": split_method == "equal",
+            "split_method": split_method,
+            "payers": payers,
+            "participants": participants,
         }
         return expense
 
@@ -412,6 +439,82 @@ class SplitwiseBackendApp(object):
         if existing is not None:
             return list(existing["user_shares"])
         return [{"user_id": current_user_id, "paid_share": self._money(params.get("cost", "0")), "owed_share": self._money(params.get("cost", "0"))}]
+
+    def _extract_expense_payers(self, params, users, existing=None):
+        payers = []
+        index = 0
+        while True:
+            prefix = "payers__%s__" % index
+            if prefix + "user_id" not in params:
+                break
+            user_id = self._parse_int(params.get(prefix + "user_id"), "payer user id")
+            self._ensure_user(user_id)
+            payers.append({
+                "user_id": user_id,
+                "paid_share": self._money(params.get(prefix + "paid_share", "0")),
+            })
+            index += 1
+        if payers:
+            return payers
+        if existing is not None and existing.get("payers"):
+            return list(existing["payers"])
+        derived = []
+        for share in users:
+            if Decimal(share["paid_share"]) > 0:
+                derived.append({"user_id": share["user_id"], "paid_share": share["paid_share"]})
+        return derived
+
+    def _extract_expense_participants(self, params, users, group_member_ids=None, existing=None):
+        participants = []
+        index = 0
+        existing_map = {item["user_id"]: item for item in (existing or {}).get("participants", [])}
+        share_map = {item["user_id"]: item for item in users}
+        while True:
+            prefix = "participants__%s__" % index
+            if prefix + "user_id" not in params:
+                break
+            user_id = self._parse_int(params.get(prefix + "user_id"), "participant user id")
+            self._ensure_user(user_id)
+            existing_participant = existing_map.get(user_id, {})
+            split_value = params.get(prefix + "split_value")
+            if split_value in (None, ""):
+                split_value = existing_participant.get("split_value")
+            if split_value in (None, "") and user_id in share_map:
+                split_value = share_map[user_id]["owed_share"]
+            participants.append({
+                "user_id": user_id,
+                "included": self._parse_bool(params.get(prefix + "included"), existing_participant.get("included", True)),
+                "split_value": split_value,
+            })
+            index += 1
+        if participants:
+            return participants
+        if existing is not None and existing.get("participants"):
+            return list(existing["participants"])
+        if group_member_ids:
+            return [
+                {
+                    "user_id": user_id,
+                    "included": True,
+                    "split_value": share_map[user_id]["owed_share"] if user_id in share_map else None,
+                }
+                for user_id in group_member_ids
+            ]
+        return [{"user_id": share["user_id"], "included": True, "split_value": share["owed_share"]} for share in users]
+
+    def _normalize_split_method(self, split_method, existing=None, split_equally=None):
+        method = str(split_method or "").strip().lower()
+        if not method and existing is not None:
+            method = str(existing.get("split_method") or "").strip().lower()
+        if not method:
+            split_equally_value = self._parse_bool(split_equally, (existing or {}).get("split_equally", False))
+            return "equal" if split_equally_value else "exact"
+        if method == "custom":
+            # Legacy: map deprecated "custom" split mode to the explicit exact-amount variant.
+            return "exact"
+        if method not in ("equal", "exact", "percentage", "shares"):
+            raise ValueError("split_method must be one of: equal, exact, percentage, shares")
+        return method
 
     def _matches_expense_filters(self, expense, params, current_user_id):
         if not self._expense_visible_to_user(expense, current_user_id):
@@ -506,6 +609,8 @@ class SplitwiseBackendApp(object):
         creditors = []
         debtors = []
         currency_code = expense["currency_code"]
+        participant_map = {item["user_id"]: item for item in expense.get("participants", [])}
+        payer_map = {item["user_id"]: item for item in expense.get("payers", [])}
         for share in expense["user_shares"]:
             net = Decimal(share["paid_share"]) - Decimal(share["owed_share"])
             net_value = self._money(net)
@@ -517,6 +622,9 @@ class SplitwiseBackendApp(object):
                 "paid_share": share["paid_share"],
                 "owed_share": share["owed_share"],
                 "net_balance": net_value,
+                "included": participant_map.get(user_id, {}).get("included", True),
+                "split_value": participant_map.get(user_id, {}).get("split_value"),
+                "payer_amount": payer_map.get(user_id, {}).get("paid_share", share["paid_share"]),
             })
             if net > 0:
                 creditors.append([user_id, net])
@@ -570,6 +678,17 @@ class SplitwiseBackendApp(object):
             "deleted_by": self._user_base_payload(self._require_user(expense["deleted_by"])) if expense["deleted_by"] is not None else None,
             "repayments": repayments,
             "users": users,
+            "split_equally": expense.get("split_equally", False),
+            "split_method": expense.get("split_method", "equal" if expense.get("split_equally") else "exact"),
+            "payers": expense.get("payers") or [
+                {"user_id": item["user_id"], "paid_share": item["paid_share"]}
+                for item in expense["user_shares"]
+                if Decimal(item["paid_share"]) > 0
+            ],
+            "participants": expense.get("participants") or [
+                {"user_id": item["user_id"], "included": True, "split_value": item["owed_share"]}
+                for item in expense["user_shares"]
+            ],
             "transaction_id": None,
         }
 
@@ -1261,6 +1380,15 @@ def _default_state():
                     {"user_id": 3, "paid_share": "0.00", "owed_share": "12.00"},
                 ],
                 "split_equally": True,
+                "split_method": "equal",
+                "payers": [
+                    {"user_id": 1, "paid_share": "36.00"},
+                ],
+                "participants": [
+                    {"user_id": 1, "included": True, "split_value": "12.00"},
+                    {"user_id": 2, "included": True, "split_value": "12.00"},
+                    {"user_id": 3, "included": True, "split_value": "12.00"},
+                ],
             }
         },
         "comments": {

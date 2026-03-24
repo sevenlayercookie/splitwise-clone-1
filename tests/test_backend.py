@@ -158,6 +158,51 @@ class BackendAppTestCase(unittest.TestCase):
         jordan_friend = next(item for item in friends['friends'] if item['email'] == 'jordan@example.com')
         self.assertEqual(jordan_friend['balance'][0]['amount'], '0.00')
 
+    def test_backend_supports_group_split_metadata_with_multiple_payers(self):
+        app = create_backend_app()
+
+        status, _, created = self._request(
+            app,
+            'POST',
+            '/api/v3.0/create_expense',
+            payload={
+                'group_id': 1,
+                'description': 'Cabin supplies',
+                'cost': '90.00',
+                'split_method': 'percentage',
+                'users__0__user_id': 1,
+                'users__0__paid_share': '60.00',
+                'users__0__owed_share': '54.00',
+                'users__1__user_id': 2,
+                'users__1__paid_share': '30.00',
+                'users__1__owed_share': '36.00',
+                'payers__0__user_id': 1,
+                'payers__0__paid_share': '60.00',
+                'payers__1__user_id': 2,
+                'payers__1__paid_share': '30.00',
+                'participants__0__user_id': 1,
+                'participants__0__included': True,
+                'participants__0__split_value': '60',
+                'participants__1__user_id': 2,
+                'participants__1__included': True,
+                'participants__1__split_value': '40',
+                'participants__2__user_id': 3,
+                'participants__2__included': False,
+                'participants__2__split_value': '0',
+            },
+        )
+        self.assertEqual(status, '200 OK')
+        expense = created['expenses'][0]
+        self.assertEqual(expense['split_method'], 'percentage')
+        self.assertEqual(expense['split_equally'], False)
+        self.assertEqual(expense['payers'][0]['paid_share'], '60.00')
+        self.assertEqual(expense['payers'][1]['paid_share'], '30.00')
+        self.assertEqual(expense['participants'][2]['user_id'], 3)
+        self.assertFalse(expense['participants'][2]['included'])
+        user_two = next(item for item in expense['users'] if item['user_id'] == 2)
+        self.assertEqual(user_two['payer_amount'], '30.00')
+        self.assertEqual(user_two['split_value'], '40')
+
 
 @contextmanager
 def running_backend_server(app):

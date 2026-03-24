@@ -157,6 +157,8 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertIn('Friend balances', html)
         self.assertIn('Paid by', html)
         self.assertIn('Custom split', html)
+        self.assertIn('Split by percentage', html)
+        self.assertIn('Split by shares', html)
         self.assertTrue(cookie)
 
         status, _, manifest, _ = self._request(app, 'GET', '/manifest.json', cookie=cookie)
@@ -250,11 +252,20 @@ class PwaAppTestCase(unittest.TestCase):
                 'cost': '24.50',
                 'currency_code': 'USD',
                 'details': 'Shared meal',
-                'split_equally': True,
+                'split_equally': False,
+                'split_method': 'percentage',
                 'category_id': 12,
                 'users': [
                     {'id': 1, 'paid_share': '24.50', 'owed_share': '12.25'},
                     {'id': 2, 'paid_share': '0.00', 'owed_share': '12.25'},
+                ],
+                'payers': [
+                    {'user_id': 1, 'paid_share': '18.00'},
+                    {'user_id': 2, 'paid_share': '6.50'},
+                ],
+                'participants': [
+                    {'user_id': 1, 'included': True, 'split_value': '50'},
+                    {'user_id': 2, 'included': True, 'split_value': '50'},
                 ],
             }
         }
@@ -271,7 +282,10 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertEqual(created_expense.currency_code, 'USD')
         self.assertEqual(created_expense.details, 'Shared meal')
         self.assertEqual(created_expense.category.id, 12)
-        self.assertTrue(created_expense.split_equally)
+        self.assertFalse(created_expense.split_equally)
+        self.assertEqual(created_expense.split_method, 'percentage')
+        self.assertEqual(created_expense.payers[0]['paid_share'], '18.00')
+        self.assertTrue(created_expense.participants[0]['included'])
         self.assertEqual(len(created_expense.users), 2)
         self.assertIsInstance(created_expense.users[0], ExpenseUser)
         self.assertEqual(created_expense.users[0].id, 1)

@@ -260,6 +260,8 @@ class LocalSplitwiseAdapter(object):
             payload["category_id"] = expense.category.id
         if getattr(expense, "split_equally", None) is not None:
             payload["split_equally"] = expense.split_equally
+        if getattr(expense, "split_method", None) is not None:
+            payload["split_method"] = expense.split_method
         users = []
         for user in getattr(expense, "users", []) or []:
             user_payload = {}
@@ -273,6 +275,18 @@ class LocalSplitwiseAdapter(object):
         for index, user in enumerate(users):
             for key, value in user.items():
                 payload["users__%s__%s" % (index, key)] = value
+        for collection_name in ("payers", "participants"):
+            items = []
+            for item in getattr(expense, collection_name, []) or []:
+                if isinstance(item, dict):
+                    items.append(item)
+                elif hasattr(item, "__dict__"):
+                    items.append(item.__dict__)
+            for index, item in enumerate(items):
+                for key, value in item.items():
+                    if key == "id":
+                        key = "user_id"
+                    payload["%s__%s__%s" % (collection_name, index, key)] = value
         return payload
 
 
@@ -638,6 +652,8 @@ class SplitwisePWAApp(object):
                 setter(payload[key])
         if "split_equally" in payload:
             expense.setSplitEqually(payload["split_equally"])
+        if "split_method" in payload:
+            expense.split_method = payload["split_method"]
         if "category_id" in payload:
             category = Category()
             category.setId(payload["category_id"])
@@ -654,6 +670,23 @@ class SplitwisePWAApp(object):
                     user.setOwedShare(user_payload["owed_share"])
                 users.append(user)
             expense.setUsers(users)
+        if "payers" in payload:
+            expense.payers = [
+                {
+                    "user_id": payer.get("user_id", payer.get("id")),
+                    "paid_share": payer.get("paid_share", payer.get("payer_amount")),
+                }
+                for payer in payload["payers"]
+            ]
+        if "participants" in payload:
+            expense.participants = [
+                {
+                    "user_id": participant.get("user_id", participant.get("id")),
+                    "included": participant.get("included"),
+                    "split_value": participant.get("split_value"),
+                }
+                for participant in payload["participants"]
+            ]
         for field in ("repeats", "repeat_interval", "email_reminder", "email_reminder_in_advance", "next_repeat"):
             if field in payload:
                 setattr(expense, field, payload[field])

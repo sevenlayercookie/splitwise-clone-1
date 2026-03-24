@@ -110,7 +110,7 @@ INDEX_HTML = """<!doctype html>
                   <input id="quick-cost" name="quick_cost" inputmode="decimal" autocomplete="off" placeholder="0.00">
                 </label>
                 <button id="quick-split-button" class="split-pill" type="button">Paid by you and split equally</button>
-                <div class="composer-grid">
+                <div id="quick-basic-split-controls" class="composer-grid">
                   <label>
                     Paid by
                     <select id="quick-paid-by" name="quick_paid_by">
@@ -122,7 +122,9 @@ INDEX_HTML = """<!doctype html>
                     Split
                     <select id="quick-split-mode" name="quick_split_mode">
                       <option value="equal">Split equally</option>
-                      <option value="custom">Custom split</option>
+                      <option value="exact">Custom split (exact amounts)</option>
+                      <option value="percentage">Split by percentage</option>
+                      <option value="shares">Split by shares</option>
                     </select>
                   </label>
                 </div>
@@ -136,6 +138,13 @@ INDEX_HTML = """<!doctype html>
                     <input id="quick-friend-share" name="quick_friend_share" inputmode="decimal" autocomplete="off" placeholder="0.00">
                   </label>
                 </div>
+                <section id="quick-advanced-split-panel" class="split-editor-panel hidden" aria-label="Advanced group split">
+                  <div class="split-panel-copy">
+                    <strong>Group split details</strong>
+                    <span>Choose who is included, who paid, and how the bill is divided.</span>
+                  </div>
+                  <div id="quick-participant-list" class="split-participant-list"></div>
+                </section>
                 <label id="quick-note-row" class="note-row hidden">
                   Note
                   <textarea id="quick-note-input" name="quick_note" rows="3" placeholder="Add a note or receipt context"></textarea>
@@ -1056,6 +1065,91 @@ textarea::placeholder {
   font-size: 0.85rem;
 }
 
+.split-editor-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8fafc;
+}
+
+.split-panel-copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.split-panel-copy strong {
+  font-size: 0.95rem;
+}
+
+.split-panel-copy span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.split-participant-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.split-participant-row {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.split-participant-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.split-participant-name {
+  font-weight: 700;
+}
+
+.split-participant-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.split-participant-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.split-participant-toggle input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.split-participant-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.split-participant-fields label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.split-participant-fields input[disabled] {
+  background: #e2e8f0;
+  color: var(--muted);
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
@@ -1282,6 +1376,9 @@ const RESULT_CACHE_KEY = 'splitwise-pwa-last-result';
 const DASHBOARD_CACHE_KEY = 'splitwise-pwa-dashboard';
 // Allow a 1-cent tolerance so rounded currency shares still validate when floating-point math introduces tiny precision errors.
 const CURRENCY_SHARE_SUM_TOLERANCE = 0.01;
+// Allow a 0.02 tolerance so 33.33/33.33/33.34-style percentage splits remain valid after rounding.
+const PERCENTAGE_TOTAL_TOLERANCE = 0.02;
+const PERCENTAGE_TOTAL_EXPECTED = 100;
 
 const QUICK_ACTIONS = [
   ['Profile', 'getCurrentUser'],
@@ -1555,6 +1652,7 @@ const state = {
     groupId: 0,
     paidBy: 'self',
     splitMode: 'equal',
+    participants: [],
     date: new Date().toISOString().slice(0, 10),
     noteVisible: false,
   },
@@ -1608,9 +1706,12 @@ function bindElements() {
   elements.quickDescription = document.getElementById('quick-description');
   elements.quickCost = document.getElementById('quick-cost');
   elements.quickSplitButton = document.getElementById('quick-split-button');
+  elements.quickBasicSplitControls = document.getElementById('quick-basic-split-controls');
   elements.quickPaidBy = document.getElementById('quick-paid-by');
   elements.quickSplitMode = document.getElementById('quick-split-mode');
   elements.quickCustomSplitRow = document.getElementById('quick-custom-split-row');
+  elements.quickAdvancedSplitPanel = document.getElementById('quick-advanced-split-panel');
+  elements.quickParticipantList = document.getElementById('quick-participant-list');
   elements.quickYourShareLabel = document.getElementById('quick-your-share-label');
   elements.quickFriendShareLabel = document.getElementById('quick-friend-share-label');
   elements.quickYourShare = document.getElementById('quick-your-share');
@@ -1914,11 +2015,16 @@ function wireBaseInteractions() {
   });
 
   elements.quickSplitButton.addEventListener('click', () => {
-    state.composer.splitMode = state.composer.splitMode === 'equal' ? 'custom' : 'equal';
+    if (['percentage', 'shares'].includes(state.composer.splitMode)) {
+      showToast('Use the Split dropdown to change percentage or shares mode', 'success');
+      return;
+    }
+    state.composer.splitMode = state.composer.splitMode === 'equal' ? 'exact' : 'equal';
     elements.quickSplitMode.value = state.composer.splitMode;
-    initializeCustomSplitValues(state.composer.splitMode === 'custom');
+    initializeCustomSplitValues(state.composer.splitMode === 'exact');
+    syncComposerParticipants(false);
     renderComposerState();
-    showToast(state.composer.splitMode === 'custom' ? 'Custom split enabled' : 'Equal split enabled', 'success');
+    showToast(state.composer.splitMode === 'exact' ? 'Exact split enabled' : 'Equal split enabled', 'success');
   });
 
   elements.quickPaidBy.addEventListener('change', () => {
@@ -1928,12 +2034,17 @@ function wireBaseInteractions() {
 
   elements.quickSplitMode.addEventListener('change', () => {
     state.composer.splitMode = elements.quickSplitMode.value;
-    initializeCustomSplitValues(state.composer.splitMode === 'custom');
+    initializeCustomSplitValues(state.composer.splitMode === 'exact');
+    syncComposerParticipants(false);
     renderComposerState();
   });
 
   elements.quickCost.addEventListener('input', () => {
     initializeCustomSplitValues(false);
+    syncComposerParticipants(false);
+    if (usesAdvancedSplitEditor()) {
+      renderComposerState();
+    }
   });
 
   elements.quickYourShare.addEventListener('input', () => {
@@ -1942,6 +2053,13 @@ function wireBaseInteractions() {
 
   elements.quickFriendShare.addEventListener('input', () => {
     initializeCustomSplitValues(false);
+  });
+
+  elements.quickParticipantList.addEventListener('input', (event) => {
+    handleParticipantEditorInput(event.target);
+  });
+  elements.quickParticipantList.addEventListener('change', (event) => {
+    handleParticipantEditorInput(event.target);
   });
 
   elements.quickDateButton.addEventListener('click', () => {
@@ -1980,6 +2098,7 @@ function wireBaseInteractions() {
     }
     if (button.dataset.friendId) {
       state.composer.friendId = Number(button.dataset.friendId);
+      state.composer.participants = [];
       if (state.screen === 'balances') {
         navigateToScreen('add');
       } else {
@@ -1990,6 +2109,7 @@ function wireBaseInteractions() {
     if (button.dataset.groupId) {
       state.groupViewId = Number(button.dataset.groupId);
       state.composer.groupId = state.groupViewId;
+      state.composer.participants = [];
       renderCurrentScreen();
       return;
     }
@@ -2340,12 +2460,17 @@ async function saveQuickExpense() {
 
   let owner = state.dashboard.getCurrentUser;
   let companion = selectedFriend();
+  const group = selectedComposerGroup();
   if (!owner || !companion) {
     await hydrateWorkspace(true);
     owner = state.dashboard.getCurrentUser;
     companion = selectedFriend();
   }
-  if (!owner || !companion) {
+  if (!owner) {
+    showToast('Sign in again before creating an expense', 'error');
+    return;
+  }
+  if (!group && !companion) {
     showToast('Load at least one friend before creating an expense', 'error');
     return;
   }
@@ -2355,35 +2480,76 @@ async function saveQuickExpense() {
     showToast('Enter a valid amount greater than zero', 'error');
     return;
   }
-  let yourShare = splitAmount(totalCost, 2);
-  let friendShare = splitAmount(totalCost, 2);
-  if (state.composer.splitMode === 'custom') {
-    const customShares = resolveCustomShares(totalCost);
-    if (!customShares) {
-      showToast('Custom shares must add up to the full expense amount', 'error');
+  let users;
+  let payers;
+  let participants;
+  if (usesAdvancedSplitEditor()) {
+    syncComposerParticipants(false);
+    const resolvedParticipants = resolveAdvancedParticipants(totalCost);
+    if (!resolvedParticipants) {
+      showToast('Payer amounts and split values must add up correctly for this expense', 'error');
       return;
     }
-    yourShare = customShares.yourShare;
-    friendShare = customShares.friendShare;
+    users = resolvedParticipants.map((participant) => ({
+      id: participant.userId,
+      paid_share: participant.paidShare,
+      owed_share: participant.owedShare,
+    }));
+    payers = resolvedParticipants
+      .filter((participant) => parseMoneyToCents(participant.paidShare) > 0)
+      .map((participant) => ({ user_id: participant.userId, paid_share: participant.paidShare }));
+    participants = composerMembers().map((member) => {
+      const composerEntry = state.composer.participants.find((participant) => participant.userId === member.id) || {};
+      const resolvedEntry = resolvedParticipants.find((participant) => participant.userId === member.id);
+      return {
+        user_id: member.id,
+        included: composerEntry.included !== false,
+        split_value: resolvedEntry ? resolvedEntry.splitValue : null,
+      };
+    });
+  } else {
+    let yourShare = splitAmount(totalCost, 2);
+    let friendShare = splitAmount(totalCost, 2);
+    if (state.composer.splitMode === 'exact') {
+      const customShares = resolveCustomShares(totalCost);
+      if (!customShares) {
+        showToast('Exact amounts must add up to the full expense amount', 'error');
+        return;
+      }
+      yourShare = customShares.yourShare;
+      friendShare = customShares.friendShare;
+    }
+    const ownerPaid = state.composer.paidBy === 'friend' ? '0.00' : formatMoney(totalCost);
+    const friendPaid = state.composer.paidBy === 'friend' ? formatMoney(totalCost) : '0.00';
+    users = [
+      { id: owner.id, paid_share: ownerPaid, owed_share: yourShare },
+      { id: companion.id, paid_share: friendPaid, owed_share: friendShare },
+    ];
+    payers = [
+      { user_id: owner.id, paid_share: ownerPaid },
+      { user_id: companion.id, paid_share: friendPaid },
+    ].filter((participant) => parseMoneyToCents(participant.paid_share) > 0);
+    participants = [
+      { user_id: owner.id, included: true, split_value: yourShare },
+      { user_id: companion.id, included: true, split_value: friendShare },
+    ];
   }
-  const ownerPaid = state.composer.paidBy === 'friend' ? '0.00' : formatMoney(totalCost);
-  const friendPaid = state.composer.paidBy === 'friend' ? formatMoney(totalCost) : '0.00';
   const repeats = elements.quickRepeatInterval.value !== 'never';
   const expense = {
     description,
     cost: formatMoney(totalCost),
     currency_code: defaultCurrencyCode(),
     split_equally: state.composer.splitMode === 'equal',
+    split_method: state.composer.splitMode,
     details: elements.quickNoteInput.value.trim() || undefined,
     date: `${state.composer.date}T12:00:00Z`,
     repeats,
     repeat_interval: elements.quickRepeatInterval.value,
     email_reminder: elements.quickEmailReminder.checked,
     email_reminder_in_advance: elements.quickEmailReminder.checked ? Number(elements.quickReminderDays.value || 0) : -1,
-    users: [
-      { id: owner.id, paid_share: ownerPaid, owed_share: yourShare },
-      { id: companion.id, paid_share: friendPaid, owed_share: friendShare },
-    ],
+    users,
+    payers,
+    participants,
   };
   if (state.composer.editingExpenseId) {
     expense.id = state.composer.editingExpenseId;
@@ -2419,6 +2585,7 @@ async function saveQuickExpense() {
   state.composer.editingExpenseId = null;
   state.composer.paidBy = 'self';
   state.composer.splitMode = 'equal';
+  state.composer.participants = [];
   state.composer.noteVisible = false;
   renderCurrentScreen();
 }
@@ -2536,9 +2703,13 @@ function renderChipPlaceholder(label) {
 }
 
 function renderComposerState() {
+  syncComposerParticipants(false);
   elements.quickNoteRow.classList.toggle('hidden', !state.composer.noteVisible);
   elements.quickReminderDaysRow.classList.toggle('hidden', !elements.quickEmailReminder.checked);
-  elements.quickCustomSplitRow.classList.toggle('hidden', state.composer.splitMode !== 'custom');
+  const advancedEditor = usesAdvancedSplitEditor();
+  elements.quickBasicSplitControls.classList.toggle('hidden', advancedEditor);
+  elements.quickCustomSplitRow.classList.toggle('hidden', advancedEditor || state.composer.splitMode !== 'exact');
+  elements.quickAdvancedSplitPanel.classList.toggle('hidden', !advancedEditor);
   const groups = availableGroups();
   const selectedGroup = groups.find((group) => group.id === state.composer.groupId);
   elements.quickGroupButton.textContent = selectedGroup ? selectedGroup.name : 'No group';
@@ -2548,17 +2719,28 @@ function renderComposerState() {
   elements.quickPaidBy.value = state.composer.paidBy;
   elements.quickSplitMode.value = state.composer.splitMode;
   const payerLabel = state.composer.paidBy === 'friend' && friend ? friend.first_name : 'you';
-  elements.quickSplitButton.textContent = friend
-    ? (state.composer.splitMode === 'custom'
-      ? `Paid by ${payerLabel} with custom shares`
-      : `Paid by ${payerLabel} and split equally with ${friend.first_name}`)
-    : (state.composer.splitMode === 'custom'
-      ? `Paid by ${payerLabel} with custom shares`
-      : `Paid by ${payerLabel} and split equally`);
+  if (advancedEditor) {
+    const includedCount = state.composer.participants.filter((participant) => participant.included !== false).length;
+    const modeLabel = state.composer.splitMode === 'percentage'
+      ? 'percentages'
+      : (state.composer.splitMode === 'shares'
+        ? 'shares'
+        : (state.composer.splitMode === 'exact' ? 'exact amounts' : 'equal shares'));
+    elements.quickSplitButton.textContent = `Split ${modeLabel} across ${includedCount || 0} people`;
+  } else {
+    elements.quickSplitButton.textContent = friend
+      ? (state.composer.splitMode === 'exact'
+        ? `Paid by ${payerLabel} with exact shares`
+        : `Paid by ${payerLabel} and split equally with ${friend.first_name}`)
+      : (state.composer.splitMode === 'exact'
+        ? `Paid by ${payerLabel} with exact shares`
+        : `Paid by ${payerLabel} and split equally`);
+  }
   elements.quickPaidBy.options[1].textContent = friend ? friend.first_name : 'Selected friend';
   elements.quickYourShareLabel.textContent = 'Your share';
   elements.quickFriendShareLabel.textContent = friend ? `${friend.first_name}'s share` : 'Friend share';
   initializeCustomSplitValues(false);
+  renderParticipantEditor();
   if (state.composer.editingExpenseId) {
     elements.quickExpenseSave.textContent = 'Update';
   } else {
@@ -2749,6 +2931,7 @@ function cycleComposerGroup() {
   } else {
     state.composer.groupId = groups[currentIndex + 1].id;
   }
+  state.composer.participants = [];
   state.groupViewId = state.composer.groupId || state.groupViewId;
   renderCurrentScreen();
 }
@@ -2868,8 +3051,63 @@ function normalizePaidByState(friend) {
   }
 }
 
+function currentUser() {
+  return state.dashboard.getCurrentUser || null;
+}
+
+function selectedComposerGroup() {
+  const groups = availableGroups();
+  return groups.find((group) => group.id === state.composer.groupId) || null;
+}
+
+function composerMembers() {
+  const group = selectedComposerGroup();
+  if (group && Array.isArray(group.members) && group.members.length) {
+    return dedupeById(group.members);
+  }
+  return dedupeById([currentUser(), selectedFriend()].filter(Boolean));
+}
+
+function dedupeById(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item || item.id === null || item.id === undefined || seen.has(item.id)) {
+      return false;
+    }
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function usesAdvancedSplitEditor() {
+  return Boolean(selectedComposerGroup()) || ['percentage', 'shares'].includes(state.composer.splitMode);
+}
+
+function syncComposerParticipants(forceDefaults) {
+  const members = composerMembers();
+  const owner = currentUser();
+  const cost = Number.parseFloat(elements.quickCost.value || '0');
+  const existingEntries = new Map((state.composer.participants || []).map((entry) => [entry.userId, entry]));
+  const defaultExact = members.length && Number.isFinite(cost) && cost > 0 ? splitAmount(cost, members.length) : '';
+  const defaultPercentage = members.length ? (100 / members.length).toFixed(2) : '';
+  state.composer.participants = members.map((member) => {
+    const existing = existingEntries.get(member.id) || {};
+    const isOwner = owner && member.id === owner.id;
+    return {
+      userId: member.id,
+      included: existing.included !== false,
+      payerAmount: forceDefaults
+        ? (isOwner && Number.isFinite(cost) && cost > 0 ? formatMoney(cost) : '0.00')
+        : (existing.payerAmount != null ? existing.payerAmount : (isOwner && Number.isFinite(cost) && cost > 0 ? formatMoney(cost) : '0.00')),
+      exactAmount: existing.exactAmount != null ? existing.exactAmount : defaultExact,
+      percentage: existing.percentage != null ? existing.percentage : defaultPercentage,
+      shares: existing.shares != null ? existing.shares : '1',
+    };
+  });
+}
+
 function initializeCustomSplitValues(force) {
-  if (state.composer.splitMode !== 'custom') {
+  if (state.composer.splitMode !== 'exact' || usesAdvancedSplitEditor()) {
     return;
   }
   const total = Number.parseFloat(elements.quickCost.value || '0');
@@ -2928,6 +3166,244 @@ function resolveCustomShares(total) {
     yourShare: formatMoney(yourShare),
     friendShare: formatMoney(friendShare),
   };
+}
+
+function handleParticipantEditorInput(target) {
+  if (!target || !target.dataset || target.dataset.participantIndex == null) {
+    return;
+  }
+  const index = Number(target.dataset.participantIndex);
+  const field = target.dataset.participantField;
+  const participant = state.composer.participants[index];
+  if (!participant || !field) {
+    return;
+  }
+  participant[field] = target.type === 'checkbox' ? target.checked : target.value;
+}
+
+function renderParticipantEditor() {
+  if (!usesAdvancedSplitEditor()) {
+    elements.quickParticipantList.innerHTML = '';
+    return;
+  }
+  syncComposerParticipants(false);
+  const members = composerMembers();
+  const splitLabel = participantSplitLabel();
+  elements.quickParticipantList.innerHTML = state.composer.participants.map((participant, index) => {
+    const member = members.find((item) => item.id === participant.userId) || {};
+    const disabled = participant.included === false ? 'disabled' : '';
+    const splitValue = participantSplitInputValue(participant);
+    const splitPlaceholder = participantSplitPlaceholder();
+    const splitDisabled = state.composer.splitMode === 'equal' ? 'disabled' : disabled;
+    return `
+      <article class="split-participant-row">
+        <div class="split-participant-main">
+          <div>
+            <div class="split-participant-name">${escapeHtml(displayName(member) || 'Group member')}</div>
+            <div class="split-participant-meta">${escapeHtml(member.email || 'Included in this expense')}</div>
+          </div>
+          <label class="split-participant-toggle">
+            <input type="checkbox" data-participant-index="${index}" data-participant-field="included" ${participant.included === false ? '' : 'checked'}>
+            <span>Include</span>
+          </label>
+        </div>
+        <div class="split-participant-fields">
+          <label>
+            Paid amount
+            <input data-participant-index="${index}" data-participant-field="payerAmount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${escapeHtml(participant.payerAmount || '')}" ${disabled}>
+          </label>
+          <label>
+            ${splitLabel}
+            <input data-participant-index="${index}" data-participant-field="${participantSplitField()}" inputmode="decimal" autocomplete="off" placeholder="${splitPlaceholder}" value="${escapeHtml(splitValue)}" ${splitDisabled}>
+          </label>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function participantSplitField() {
+  if (state.composer.splitMode === 'percentage') {
+    return 'percentage';
+  }
+  if (state.composer.splitMode === 'shares') {
+    return 'shares';
+  }
+  return 'exactAmount';
+}
+
+function participantSplitLabel() {
+  if (state.composer.splitMode === 'percentage') {
+    return 'Percent';
+  }
+  if (state.composer.splitMode === 'shares') {
+    return 'Shares';
+  }
+  if (state.composer.splitMode === 'equal') {
+    return 'Equal share';
+  }
+  return 'Amount owed';
+}
+
+function participantSplitPlaceholder() {
+  if (state.composer.splitMode === 'percentage') {
+    return '25';
+  }
+  if (state.composer.splitMode === 'shares') {
+    return '1';
+  }
+  if (state.composer.splitMode === 'equal') {
+    return 'Auto';
+  }
+  return '0.00';
+}
+
+function participantSplitInputValue(participant) {
+  if (state.composer.splitMode === 'percentage') {
+    return participant.percentage || '';
+  }
+  if (state.composer.splitMode === 'shares') {
+    return participant.shares || '';
+  }
+  if (state.composer.splitMode === 'equal') {
+    return '';
+  }
+  return participant.exactAmount || '';
+}
+
+function parseMoneyToCents(value) {
+  const amount = Number.parseFloat(value || '0');
+  if (!Number.isFinite(amount)) {
+    return NaN;
+  }
+  return Math.round(amount * 100);
+}
+
+function centsToMoney(value) {
+  return formatMoney((value || 0) / 100);
+}
+
+function allocateEqualCents(totalCents, count) {
+  if (!Number.isInteger(totalCents) || !Number.isInteger(count) || count <= 0) {
+    return [];
+  }
+  const base = Math.floor(totalCents / count);
+  let remainder = totalCents - (base * count);
+  return Array.from({ length: count }, () => {
+    const value = base + (remainder > 0 ? 1 : 0);
+    remainder = Math.max(0, remainder - 1);
+    return value;
+  });
+}
+
+function allocateWeightedCents(totalCents, weights) {
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  if (!Number.isInteger(totalCents) || !Number.isFinite(totalWeight) || totalWeight <= 0) {
+    return [];
+  }
+  const base = [];
+  const fractions = [];
+  let allocated = 0;
+  weights.forEach((weight, index) => {
+    const raw = (totalCents * weight) / totalWeight;
+    const cents = Math.floor(raw);
+    base[index] = cents;
+    fractions[index] = raw - cents;
+    allocated += cents;
+  });
+  let remainder = totalCents - allocated;
+  while (remainder > 0) {
+    let bestIndex = 0;
+    for (let index = 1; index < fractions.length; index += 1) {
+      if (fractions[index] > fractions[bestIndex]) {
+        bestIndex = index;
+      }
+    }
+    base[bestIndex] += 1;
+    fractions[bestIndex] = 0;
+    remainder -= 1;
+  }
+  return base;
+}
+
+function resolveAdvancedParticipants(totalCost) {
+  const totalCents = parseMoneyToCents(totalCost);
+  if (!Number.isInteger(totalCents) || totalCents <= 0) {
+    return null;
+  }
+  const activeParticipants = (state.composer.participants || []).filter((participant) => participant.included !== false);
+  if (!activeParticipants.length) {
+    return null;
+  }
+
+  const payerCents = activeParticipants.map((participant) => parseMoneyToCents(participant.payerAmount || '0'));
+  if (payerCents.some((value) => !Number.isInteger(value) || value < 0)) {
+    return null;
+  }
+  const totalPaid = payerCents.reduce((sum, value) => sum + value, 0);
+  if (totalPaid !== totalCents) {
+    return null;
+  }
+
+  let owedCents = [];
+  if (state.composer.splitMode === 'equal') {
+    owedCents = allocateEqualCents(totalCents, activeParticipants.length);
+  } else if (state.composer.splitMode === 'exact') {
+    const values = activeParticipants.map((participant) => parseMoneyToCents(participant.exactAmount || ''));
+    const missingIndexes = values
+      .map((value, index) => (Number.isInteger(value) ? null : index))
+      .filter((value) => value != null);
+    if (missingIndexes.length > 1) {
+      return null;
+    }
+    let knownTotal = 0;
+    for (const value of values) {
+      if (Number.isInteger(value)) {
+        if (value < 0) {
+          return null;
+        }
+        knownTotal += value;
+      }
+    }
+    if (missingIndexes.length === 1) {
+      const remainder = totalCents - knownTotal;
+      if (remainder < 0) {
+        return null;
+      }
+      values[missingIndexes[0]] = remainder;
+    }
+    if (values.reduce((sum, value) => sum + value, 0) !== totalCents) {
+      return null;
+    }
+    owedCents = values;
+  } else if (state.composer.splitMode === 'percentage') {
+    const percentages = activeParticipants.map((participant) => Number.parseFloat(participant.percentage || ''));
+    if (percentages.some((value) => !Number.isFinite(value) || value < 0)) {
+      return null;
+    }
+    const percentageTotal = percentages.reduce((sum, value) => sum + value, 0);
+    if (Math.abs(percentageTotal - PERCENTAGE_TOTAL_EXPECTED) > PERCENTAGE_TOTAL_TOLERANCE) {
+      return null;
+    }
+    owedCents = allocateWeightedCents(totalCents, percentages);
+  } else {
+    const shares = activeParticipants.map((participant) => Number.parseFloat(participant.shares || ''));
+    if (shares.some((value) => !Number.isFinite(value) || value <= 0)) {
+      return null;
+    }
+    owedCents = allocateWeightedCents(totalCents, shares);
+  }
+
+  return activeParticipants.map((participant, index) => ({
+    userId: participant.userId,
+    paidShare: centsToMoney(payerCents[index]),
+    owedShare: centsToMoney(owedCents[index]),
+    splitValue: state.composer.splitMode === 'exact'
+      ? centsToMoney(owedCents[index])
+      : (state.composer.splitMode === 'equal'
+        ? null
+        : String(participant[participantSplitField()] || '')),
+  }));
 }
 
 function currentExpense() {
@@ -2998,9 +3474,9 @@ function renderExpenseDetail() {
 }
 
 function populateComposerFromExpense(expense) {
-  const currentUser = state.dashboard.getCurrentUser;
+  const currentUserValue = currentUser();
   const otherUser = Array.isArray(expense.users)
-    ? expense.users.find((item) => item.user_id !== currentUser.id)
+    ? expense.users.find((item) => item.user_id !== currentUserValue.id)
     : null;
   elements.quickDescription.value = expense.description || '';
   elements.quickCost.value = expense.cost || '';
@@ -3018,23 +3494,48 @@ function populateComposerFromExpense(expense) {
     state.composer.friendId = otherUser.user_id;
   }
   const currentUserShare = Array.isArray(expense.users)
-    ? expense.users.find((item) => item.user_id === currentUser.id)
+    ? expense.users.find((item) => item.user_id === currentUserValue.id)
     : null;
   const otherUserShare = Array.isArray(expense.users)
-    ? expense.users.find((item) => item.user_id !== currentUser.id)
+    ? expense.users.find((item) => item.user_id !== currentUserValue.id)
     : null;
   state.composer.paidBy = determinePaidBy(currentUserShare, otherUserShare);
-  state.composer.splitMode = expense.split_equally ? 'equal' : 'custom';
+  state.composer.splitMode = expense.split_method || (expense.split_equally ? 'equal' : 'exact');
   elements.quickPaidBy.value = state.composer.paidBy;
   elements.quickSplitMode.value = state.composer.splitMode;
   elements.quickYourShare.value = currentUserShare ? formatMoney(currentUserShare.owed_share || '0') : '';
   elements.quickFriendShare.value = otherUserShare ? formatMoney(otherUserShare.owed_share || '0') : '';
+  state.composer.participants = buildComposerParticipantsFromExpense(expense);
 }
 
 function determinePaidBy(currentUserShare, otherUserShare) {
   const currentPaid = parseShareAmount(currentUserShare && currentUserShare.paid_share);
   const otherPaid = parseShareAmount(otherUserShare && otherUserShare.paid_share);
   return otherPaid > currentPaid ? 'friend' : 'self';
+}
+
+function buildComposerParticipantsFromExpense(expense) {
+  const group = selectedComposerGroup();
+  const members = group && Array.isArray(group.members) && group.members.length
+    ? dedupeById(group.members)
+    : dedupeById((Array.isArray(expense.users) ? expense.users : []).map((user) => user.user || user));
+  const participantMap = new Map(((expense.participants || [])).map((participant) => [participant.user_id, participant]));
+  const payerMap = new Map(((expense.payers || [])).map((payer) => [payer.user_id, payer]));
+  const userMap = new Map(((expense.users || [])).map((user) => [user.user_id, user]));
+  return members.map((member) => {
+    const userId = member.id || member.user_id;
+    const participant = participantMap.get(userId) || {};
+    const userShare = userMap.get(userId) || {};
+    const splitMethod = expense.split_method || (expense.split_equally ? 'equal' : 'exact');
+    return {
+      userId,
+      included: participant.included !== false,
+      payerAmount: (payerMap.get(userId) || {}).paid_share || userShare.paid_share || '0.00',
+      exactAmount: splitMethod === 'exact' ? (participant.split_value || userShare.owed_share || '') : (userShare.owed_share || ''),
+      percentage: splitMethod === 'percentage' ? (participant.split_value || '') : '',
+      shares: splitMethod === 'shares' ? (participant.split_value || '1') : '1',
+    };
+  });
 }
 
 function parseShareAmount(value) {
@@ -3175,6 +3676,7 @@ function resetWorkspaceCache() {
   state.composer.groupId = 0;
   state.composer.paidBy = 'self';
   state.composer.splitMode = 'equal';
+  state.composer.participants = [];
   localStorage.removeItem(DASHBOARD_CACHE_KEY);
 }
 
