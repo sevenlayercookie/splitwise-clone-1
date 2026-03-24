@@ -2354,8 +2354,8 @@ async function saveQuickExpense() {
     showToast('Enter a valid amount greater than zero', 'error');
     return;
   }
-  let yourShare = splitAmount(cost, 2);
-  let friendShare = splitAmount(cost, 2);
+  let yourShare = splitAmount(totalCost, 2);
+  let friendShare = splitAmount(totalCost, 2);
   if (state.composer.splitMode === 'custom') {
     const customShares = resolveCustomShares(totalCost);
     if (!customShares) {
@@ -2365,8 +2365,8 @@ async function saveQuickExpense() {
     yourShare = customShares.yourShare;
     friendShare = customShares.friendShare;
   }
-  const ownerPaid = state.composer.paidBy === 'friend' ? '0.00' : formatMoney(cost);
-  const friendPaid = state.composer.paidBy === 'friend' ? formatMoney(cost) : '0.00';
+  const ownerPaid = state.composer.paidBy === 'friend' ? '0.00' : formatMoney(totalCost);
+  const friendPaid = state.composer.paidBy === 'friend' ? formatMoney(totalCost) : '0.00';
   const repeats = elements.quickRepeatInterval.value !== 'never';
   const expense = {
     description,
@@ -2880,15 +2880,19 @@ function initializeCustomSplitValues(force) {
   }
   if (yourValue && !friendValue) {
     const yourShare = Number.parseFloat(yourValue);
-    if (Number.isFinite(yourShare)) {
-      elements.quickFriendShare.value = formatMoney(Math.max(total - yourShare, 0));
+    if (Number.isFinite(yourShare) && yourShare <= total) {
+      elements.quickFriendShare.value = formatMoney(total - yourShare);
+    } else if (yourShare > total) {
+      elements.quickFriendShare.value = '';
     }
     return;
   }
   if (!yourValue && friendValue) {
     const friendShare = Number.parseFloat(friendValue);
-    if (Number.isFinite(friendShare)) {
-      elements.quickYourShare.value = formatMoney(Math.max(total - friendShare, 0));
+    if (Number.isFinite(friendShare) && friendShare <= total) {
+      elements.quickYourShare.value = formatMoney(total - friendShare);
+    } else if (friendShare > total) {
+      elements.quickYourShare.value = '';
     }
   }
 }
