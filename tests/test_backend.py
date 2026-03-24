@@ -1,5 +1,6 @@
 import io
 import json
+import tempfile
 import threading
 import unittest
 from contextlib import contextmanager
@@ -10,6 +11,7 @@ from splitwise import Splitwise
 from splitwise.backend import create_backend_app
 from splitwise.expense import Expense, ExpenseUser
 from splitwise.group import Group
+from splitwise.persistence import PersistenceStore
 from splitwise.pwa import create_app
 from splitwise.user import User
 
@@ -280,6 +282,26 @@ class BackendAppTestCase(unittest.TestCase):
         cancelled = app.cancel_expense_series(admin['id'], series_id)
         self.assertTrue(cancelled['series_cancelled'])
         self.assertFalse(cancelled['repeats'])
+
+    def test_backend_can_persist_accounts_and_groups(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            environment = {'SPLITWISE_PERSISTENCE_DIR': tempdir}
+            persistence = PersistenceStore(environment)
+            app = create_backend_app(persistence=persistence)
+            user = app.register_account('Persisted', 'persisted@example.com', 'password123')
+            created = app._handle_create_group({'name': 'Persisted group'}, user['id'])[1]['group']
+
+            reloaded = create_backend_app(persistence=PersistenceStore(environment))
+            self.assertEqual(reloaded.authenticate_account('persisted@example.com', 'password123')['id'], user['id'])
+
+            status, _, groups = self._request(
+                reloaded,
+                'GET',
+                '/api/v3.0/get_groups',
+                headers={'HTTP_X_SPLITWISE_USER_ID': str(user['id'])},
+            )
+            self.assertEqual(status, '200 OK')
+            self.assertTrue(any(item['id'] == created['id'] for item in groups['groups']))
 
 
 @contextmanager

@@ -1,6 +1,8 @@
 import io
 import json
+import tempfile
 import unittest
+from http import cookies
 from importlib import import_module
 from wsgiref.util import setup_testing_defaults
 
@@ -735,6 +737,58 @@ class PwaAppTestCase(unittest.TestCase):
         )
         self.assertEqual(status, '200 OK')
         self.assertTrue(leave_response['result']['left'])
+
+    def test_local_pwa_can_persist_accounts_and_saved_session_settings(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            environment = {'SPLITWISE_PERSISTENCE_DIR': tempdir}
+            first_app = create_app(environment=environment)
+
+            status, _, register_response, cookie = self._request(
+                first_app,
+                'POST',
+                '/api/local/register',
+                payload={'first_name': 'Persisted', 'email': 'persisted-local@example.com', 'password': 'password123'},
+            )
+            self.assertEqual(status, '200 OK')
+
+            status, _, _, cookie = self._request(
+                first_app,
+                'POST',
+                '/api/session',
+                payload={'consumer_key': 'demo-key', 'consumer_secret': 'demo-secret'},
+                cookie=cookie,
+            )
+            self.assertEqual(status, '200 OK')
+
+            second_app = create_app(environment=environment)
+
+            status, _, config_response, cookie = self._request(second_app, 'GET', '/api/config', cookie=cookie)
+            self.assertEqual(status, '200 OK')
+            self.assertTrue(config_response['authenticated'])
+            self.assertEqual(config_response['local_user']['email'], 'persisted-local@example.com')
+            self.assertTrue(config_response['session']['consumer_key'])
+            self.assertTrue(config_response['session']['consumer_secret'])
+            jar = cookies.SimpleCookie()
+            jar.load(cookie)
+            session_id = jar['splitwise_pwa'].value
+            self.assertEqual(second_app.sessions[session_id]['consumer_key'], 'demo-key')
+            self.assertEqual(second_app.sessions[session_id]['consumer_secret'], 'demo-secret')
+
+            status, _, _, cookie = self._request(
+                second_app,
+                'POST',
+                '/api/local/logout',
+                payload={},
+                cookie=cookie,
+            )
+            self.assertEqual(status, '200 OK')
+
+            third_app = create_app(environment=environment)
+            status, _, config_after_logout, _ = self._request(third_app, 'GET', '/api/config', cookie=cookie)
+            self.assertEqual(status, '200 OK')
+            self.assertFalse(config_after_logout['authenticated'])
+            self.assertTrue(config_after_logout['session']['consumer_key'])
+            self.assertEqual(third_app.sessions[session_id]['consumer_key'], 'demo-key')
 
 
 if __name__ == '__main__':

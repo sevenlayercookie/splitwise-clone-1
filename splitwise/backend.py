@@ -15,8 +15,20 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SplitwiseBackendApp(object):
-    def __init__(self, initial_state=None):
-        self.state = initial_state or _default_state()
+    def __init__(self, initial_state=None, persistence=None):
+        self.persistence = persistence
+        self.state = initial_state or self._load_state()
+
+    def _load_state(self):
+        if self.persistence:
+            persisted = self.persistence.load_state()
+            if persisted:
+                return persisted
+        return _default_state()
+
+    def _persist_state(self):
+        if self.persistence:
+            self.persistence.save_state(self.state)
 
     def __call__(self, environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
@@ -113,6 +125,7 @@ class SplitwiseBackendApp(object):
         token = "request-%s" % secrets.token_hex(8)
         secret = "secret-%s" % secrets.token_hex(8)
         self.state["oauth1_request_tokens"][token] = secret
+        self._persist_state()
         payload = "oauth_token=%s&oauth_token_secret=%s" % (token, secret)
         return "200 OK", payload.encode("utf-8"), "application/x-www-form-urlencoded; charset=utf-8"
 
@@ -201,6 +214,7 @@ class SplitwiseBackendApp(object):
         }
         self.state["groups"][group_id] = group
         self._add_notification("Group '%s' created" % group["name"], "group", group_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"group": self._group_payload(group_id, current_user_id)}, "json"
 
     def _handle_add_user_to_group(self, params, current_user_id):
@@ -226,6 +240,7 @@ class SplitwiseBackendApp(object):
             group["member_ids"].append(user["id"])
             group["updated_at"] = self._now()
         self._add_notification("%s added to %s" % (user["first_name"], group["name"]), "group", group_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"success": True, "user": self._friend_payload(user["id"]), "errors": {}}, "json"
 
     def _handle_delete_group(self, group_id, current_user_id):
@@ -237,6 +252,7 @@ class SplitwiseBackendApp(object):
         group["deleted"] = True
         group["updated_at"] = self._now()
         self._add_notification("Group '%s' deleted" % group["name"], "group", group_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"success": True, "errors": {}}, "json"
 
     def _handle_get_expenses(self, params, current_user_id):
@@ -259,6 +275,7 @@ class SplitwiseBackendApp(object):
         expense = self._build_expense_record(expense_id, params, current_user_id, existing=None)
         self.state["expenses"][expense_id] = expense
         self._add_notification("Expense '%s' created" % expense["description"], "expense", expense_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"expenses": [self._expense_payload(expense_id, current_user_id)], "errors": {}}, "json"
 
     def _handle_update_expense(self, expense_id, params, current_user_id):
@@ -267,6 +284,7 @@ class SplitwiseBackendApp(object):
         expense["created_at"] = existing["created_at"]
         self.state["expenses"][expense_id] = expense
         self._add_notification("Expense '%s' updated" % expense["description"], "expense", expense_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"expenses": [self._expense_payload(expense_id, current_user_id)], "errors": {}}, "json"
 
     def _handle_delete_expense(self, expense_id, current_user_id):
@@ -275,6 +293,7 @@ class SplitwiseBackendApp(object):
         expense["deleted_by"] = current_user_id
         expense["updated_at"] = expense["deleted_at"]
         self._add_notification("Expense '%s' deleted" % expense["description"], "expense", expense_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"success": True, "errors": {}}, "json"
 
     def _handle_get_comments(self, params):
@@ -300,6 +319,7 @@ class SplitwiseBackendApp(object):
         self.state["comments"][comment_id] = comment
         self.state["expense_comments"].setdefault(expense_id, []).append(comment_id)
         self._add_notification("Comment added to expense %s" % expense_id, "expense", expense_id, current_user_id)
+        self._persist_state()
         return "200 OK", {"comment": self._comment_payload(comment_id), "errors": {}}, "json"
 
     def _handle_get_notifications(self, params, current_user_id):
@@ -887,6 +907,7 @@ class SplitwiseBackendApp(object):
         user = self._create_user(first_name=first_name, last_name=last_name, email=email)
         self.state["password_hashes"][user["id"]] = password_hash
         self.state["friendships"].setdefault(user["id"], set())
+        self._persist_state()
         return self._user_payload(user["id"])
 
     def authenticate_account(self, email, password):
@@ -917,6 +938,7 @@ class SplitwiseBackendApp(object):
             friend["id"],
             current_user_id,
         )
+        self._persist_state()
         return self._friend_payload(friend["id"], current_user_id)
 
     def send_friend_request(self, current_user_id, email=None, user_id=None):
@@ -953,6 +975,7 @@ class SplitwiseBackendApp(object):
             friend["id"],
             current_user_id,
         )
+        self._persist_state()
         return self._friend_request_payload(request_id, current_user_id)
 
     def list_friend_requests(self, current_user_id):
@@ -987,6 +1010,7 @@ class SplitwiseBackendApp(object):
                 current_user_id,
                 visible_to_all=True,
             )
+            self._persist_state()
             return {
                 "status": "accepted",
                 "friend": self._friend_payload(request["from_user_id"], current_user_id),
@@ -998,6 +1022,7 @@ class SplitwiseBackendApp(object):
             requester["id"],
             current_user_id,
         )
+        self._persist_state()
         return {"status": "rejected", "request": self._friend_request_payload(request_id, current_user_id)}
 
     def update_account(self, current_user_id, first_name=None, last_name=None, email=None):
@@ -1020,6 +1045,7 @@ class SplitwiseBackendApp(object):
             user["email"] = normalized_email
         user["updated_at"] = self._now()
         self._add_notification("Profile updated", "user", current_user_id, current_user_id)
+        self._persist_state()
         return self._current_user_payload(current_user_id)
 
     def update_password(self, current_user_id, current_password, new_password):
@@ -1028,6 +1054,7 @@ class SplitwiseBackendApp(object):
             raise ValueError("Current password is incorrect")
         self.state["password_hashes"][current_user_id] = self._hash_password(new_password)
         self._add_notification("Password updated", "user", current_user_id, current_user_id)
+        self._persist_state()
         return {"updated": True}
 
     def update_group(self, current_user_id, group_id, name=None, whiteboard=None):
@@ -1043,6 +1070,7 @@ class SplitwiseBackendApp(object):
             group["whiteboard"] = whiteboard.strip() or None
         group["updated_at"] = self._now()
         self._add_notification("Group '%s' updated" % group["name"], "group", group["id"], current_user_id)
+        self._persist_state()
         return self._group_payload(group["id"], current_user_id)
 
     def add_group_member(self, current_user_id, group_id, user_id):
@@ -1063,6 +1091,7 @@ class SplitwiseBackendApp(object):
         group["updated_at"] = self._now()
         member = self._require_user(member_user_id)
         self._add_notification("%s removed from %s" % (member["first_name"], group["name"]), "group", group["id"], current_user_id)
+        self._persist_state()
         return self._group_payload(group["id"], current_user_id)
 
     def leave_group(self, current_user_id, group_id):
@@ -1083,6 +1112,7 @@ class SplitwiseBackendApp(object):
                 group["admin_ids"] = [item for item in group["admin_ids"] if item != next_owner]
         group["updated_at"] = self._now()
         self._add_notification("%s left %s" % (self._require_user(current_user_id)["first_name"], group["name"]), "group", group["id"], current_user_id)
+        self._persist_state()
         return {"left": True, "group_id": group["id"], "deleted": bool(group.get("deleted"))}
 
     def set_group_admin(self, current_user_id, group_id, member_user_id, is_admin):
@@ -1108,6 +1138,7 @@ class SplitwiseBackendApp(object):
             group["id"],
             current_user_id,
         )
+        self._persist_state()
         return self._group_payload(group["id"], current_user_id)
 
     def set_group_archived(self, current_user_id, group_id, archived):
@@ -1124,6 +1155,7 @@ class SplitwiseBackendApp(object):
             group["id"],
             current_user_id,
         )
+        self._persist_state()
         return self._group_payload(group["id"], current_user_id)
 
     def pause_expense_series(self, current_user_id, series_id):
@@ -1131,6 +1163,7 @@ class SplitwiseBackendApp(object):
         root["series_paused"] = True
         root["updated_at"] = self._now()
         self._add_notification("Recurring series '%s' paused" % root["description"], "expense", root["id"], current_user_id)
+        self._persist_state()
         return self._expense_payload(root["id"], current_user_id)
 
     def resume_expense_series(self, current_user_id, series_id):
@@ -1138,6 +1171,7 @@ class SplitwiseBackendApp(object):
         root["series_paused"] = False
         root["updated_at"] = self._now()
         self._add_notification("Recurring series '%s' resumed" % root["description"], "expense", root["id"], current_user_id)
+        self._persist_state()
         return self._expense_payload(root["id"], current_user_id)
 
     def cancel_expense_series(self, current_user_id, series_id):
@@ -1147,6 +1181,7 @@ class SplitwiseBackendApp(object):
         root["next_repeat"] = None
         root["updated_at"] = self._now()
         self._add_notification("Recurring series '%s' cancelled" % root["description"], "expense", root["id"], current_user_id)
+        self._persist_state()
         return self._expense_payload(root["id"], current_user_id)
 
     def update_expense_series(self, current_user_id, series_id, params):
@@ -1162,6 +1197,7 @@ class SplitwiseBackendApp(object):
         updated["series_root_expense_id"] = root["series_root_expense_id"]
         self.state["expenses"][root["id"]] = updated
         self._add_notification("Recurring series '%s' updated" % updated["description"], "expense", updated["id"], current_user_id)
+        self._persist_state()
         return self._expense_payload(updated["id"], current_user_id)
 
     def record_settlement(self, current_user_id, other_user_id, amount, group_id=None, note=None, date=None, from_user_id=None, to_user_id=None):
@@ -1210,6 +1246,7 @@ class SplitwiseBackendApp(object):
             settlement_id,
             current_user_id,
         )
+        self._persist_state()
         return dict(record)
 
     def _resolve_current_user_id(self, environ):
@@ -1422,6 +1459,8 @@ class SplitwiseBackendApp(object):
                 root["updated_at"] = self._now()
                 next_repeat = root.get("next_repeat")
                 loops += 1
+        if generated:
+            self._persist_state()
         return generated
 
     def _series_instance_exists(self, series_id, date_value):
@@ -1674,8 +1713,8 @@ def _default_state():
     return state
 
 
-def create_backend_app(initial_state=None):
-    return SplitwiseBackendApp(initial_state=initial_state)
+def create_backend_app(initial_state=None, persistence=None):
+    return SplitwiseBackendApp(initial_state=initial_state, persistence=persistence)
 
 
 def main():

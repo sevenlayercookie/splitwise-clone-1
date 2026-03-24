@@ -2,6 +2,7 @@ import io
 import json
 import os
 import secrets
+import hashlib
 from http import cookies
 from urllib.parse import urlencode
 from wsgiref.simple_server import make_server
@@ -19,6 +20,7 @@ from splitwise.exception import (
 )
 from splitwise.expense import Expense
 from splitwise.group import Group
+from splitwise.persistence import DEFAULT_PERSISTENCE_DIR, PersistenceStore
 from splitwise.pwa_assets import APP_JS, ICON_SVG, INDEX_HTML, MANIFEST_JSON, SERVICE_WORKER_JS, STYLES_CSS
 from splitwise.user import ExpenseUser, User
 
@@ -294,17 +296,22 @@ class SplitwisePWAApp(object):
     def __init__(self, splitwise_factory=Splitwise, environment=None):
         self.splitwise_factory = splitwise_factory
         self.environment = environment or os.environ
-        self.sessions = {}
-        self.backend_app = create_backend_app()
+        self.persistence = self._build_persistence_store()
+        self.sessions = self.persistence.load_sessions() if self.persistence else {}
+        self.backend_app = create_backend_app(persistence=self.persistence)
 
     def __call__(self, environ, start_response):
         path = environ.get("PATH_INFO", "/") or "/"
         method = environ.get("REQUEST_METHOD", "GET").upper()
         session_id, session, session_cookie = self._get_session(environ)
+        previous_session_fingerprint = None
+        if self._session_can_change(method, path):
+            previous_session_fingerprint = self._session_fingerprint(session)
         headers = self._default_headers(session_cookie)
 
         try:
             status, payload, content_type = self._route_request(method, path, environ, session, session_id)
+            self._persist_sessions_if_changed(session, previous_session_fingerprint)
             if content_type == "json":
                 return self._respond_json(start_response, status, payload, headers)
             return self._respond(start_response, status, payload, headers, content_type)
@@ -315,6 +322,48 @@ class SplitwisePWAApp(object):
             return self._respond_json(start_response, status, {"error": str(exc)}, headers)
         except Exception as exc:  # pragma: no cover - protective fallback
             return self._respond_json(start_response, "500 Internal Server Error", {"error": str(exc)}, headers)
+
+    def _build_persistence_store(self):
+        if self.environment.get("KV_REST_API_URL") and self.environment.get("KV_REST_API_TOKEN"):
+            return PersistenceStore(environment=self.environment)
+        if self.environment.get("SPLITWISE_PERSISTENCE_DIR"):
+            return PersistenceStore(environment=self.environment)
+        if self.environment.get("VERCEL"):
+            persisted_environment = dict(self.environment)
+            persisted_environment.setdefault("SPLITWISE_PERSISTENCE_DIR", DEFAULT_PERSISTENCE_DIR)
+            return PersistenceStore(environment=persisted_environment)
+        return None
+
+    def _persist_sessions(self):
+        if self.persistence:
+            self.persistence.save_sessions(self.sessions)
+
+    def _persist_sessions_if_changed(self, session, previous_session_fingerprint):
+        if not self.persistence or previous_session_fingerprint is None:
+            return
+        if self._session_fingerprint(session) != previous_session_fingerprint:
+            self._persist_sessions()
+
+    def _session_fingerprint(self, session):
+        serialized = json.dumps(self._serialize(session), sort_keys=True).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()
+
+    def _session_can_change(self, method, path):
+        if method != "POST":
+            return False
+        if path == "/api/session":
+            return True
+        if path.startswith("/api/local/"):
+            return True
+        # Keep this list in sync with the operation handlers that write OAuth data into the session.
+        if path.startswith("/api/operations/") and path.rsplit("/", 1)[-1] in (
+            "getAuthorizeURL",
+            "getAccessToken",
+            "getOAuth2AuthorizeURL",
+            "getOAuth2AccessToken",
+        ):
+            return True
+        return False
 
     def _default_headers(self, session_cookie):
         headers = [

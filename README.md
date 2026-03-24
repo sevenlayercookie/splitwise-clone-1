@@ -25,6 +25,8 @@ python -m splitwise.pwa
 
 Open `http://127.0.0.1:8765` on desktop or mobile. The app exposes OAuth 1, OAuth 2, profile, friends, groups, expenses, comments, categories, currencies, and notifications workflows, and installs as a PWA with an offline-cached shell.
 
+To persist local accounts, app state, and saved session settings between local restarts, set `SPLITWISE_PERSISTENCE_DIR` to a writable directory before starting the app. When you do not set it locally, the app defaults to a user-specific `~/.local/state/...` directory; on Vercel it falls back to `/tmp/...` unless `KV_REST_API_URL` and `KV_REST_API_TOKEN` are configured for cross-deployment persistence.
+
 ## Local backend demo
 
 This repository also includes an in-memory backend that mirrors the SDK's Splitwise-style HTTP routes. Run it with:
@@ -49,6 +51,7 @@ This repository includes a Vercel entrypoint for the local PWA/backend demo. The
    - `SPLITWISE_OAUTH_BASE_URL`
    - `SPLITWISE_BACKEND_BASE_URL`
    - `SPLITWISE_BACKEND_OAUTH_BASE_URL`
+   - `KV_REST_API_URL` and `KV_REST_API_TOKEN` if you want local users, expenses, groups, and saved session settings to persist across deployments
 5. Deploy.
 
 If you prefer the CLI, run:
