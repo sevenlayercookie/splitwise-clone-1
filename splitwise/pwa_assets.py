@@ -1280,6 +1280,7 @@ textarea::placeholder {
 APP_JS = """const STORAGE_KEY = 'splitwise-pwa-used-operations';
 const RESULT_CACHE_KEY = 'splitwise-pwa-last-result';
 const DASHBOARD_CACHE_KEY = 'splitwise-pwa-dashboard';
+const SHARE_SUM_TOLERANCE = 0.01;
 
 const QUICK_ACTIONS = [
   ['Profile', 'getCurrentUser'],
@@ -2910,7 +2911,7 @@ function resolveCustomShares(total) {
   if (yourShare < 0 || friendShare < 0) {
     return null;
   }
-  if (Math.abs((yourShare + friendShare) - total) > 0.01) {
+  if (Math.abs((yourShare + friendShare) - total) > SHARE_SUM_TOLERANCE) {
     return null;
   }
   return {
@@ -3012,14 +3013,18 @@ function populateComposerFromExpense(expense) {
   const otherUserShare = Array.isArray(expense.users)
     ? expense.users.find((item) => item.user_id !== currentUser.id)
     : null;
-  state.composer.paidBy = otherUserShare && Number(otherUserShare.paid_share || 0) > Number((currentUserShare && currentUserShare.paid_share) || 0)
-    ? 'friend'
-    : 'self';
+  state.composer.paidBy = determinePaidBy(currentUserShare, otherUserShare);
   state.composer.splitMode = expense.split_equally ? 'equal' : 'custom';
   elements.quickPaidBy.value = state.composer.paidBy;
   elements.quickSplitMode.value = state.composer.splitMode;
   elements.quickYourShare.value = currentUserShare ? formatMoney(currentUserShare.owed_share || '0') : '';
   elements.quickFriendShare.value = otherUserShare ? formatMoney(otherUserShare.owed_share || '0') : '';
+}
+
+function determinePaidBy(currentUserShare, otherUserShare) {
+  const currentPaid = Number((currentUserShare && currentUserShare.paid_share) || 0);
+  const otherPaid = Number((otherUserShare && otherUserShare.paid_share) || 0);
+  return otherPaid > currentPaid ? 'friend' : 'self';
 }
 
 function renderGroupComposer() {
