@@ -1280,6 +1280,7 @@ textarea::placeholder {
 APP_JS = """const STORAGE_KEY = 'splitwise-pwa-used-operations';
 const RESULT_CACHE_KEY = 'splitwise-pwa-last-result';
 const DASHBOARD_CACHE_KEY = 'splitwise-pwa-dashboard';
+// Allow a 1-cent tolerance so rounded currency shares still validate when floating-point math introduces tiny precision errors.
 const CURRENCY_SHARE_SUM_TOLERANCE = 0.01;
 
 const QUICK_ACTIONS = [
@@ -2544,7 +2545,6 @@ function renderComposerState() {
   const today = new Date().toISOString().slice(0, 10);
   elements.quickDateButton.textContent = state.composer.date === today ? 'Today' : state.composer.date;
   const friend = selectedFriend();
-  normalizePaidByState(friend);
   elements.quickPaidBy.value = state.composer.paidBy;
   elements.quickSplitMode.value = state.composer.splitMode;
   const payerLabel = state.composer.paidBy === 'friend' && friend ? friend.first_name : 'you';
