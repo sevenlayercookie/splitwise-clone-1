@@ -51,6 +51,16 @@ class SplitwiseBackendApp(object):
 
         params = self._read_params(environ)
         endpoint = path[len("/api/v3.0/"):]
+        if method == "GET" and endpoint in (
+            "get_current_user",
+            "get_friends",
+            "get_groups",
+            "get_expenses",
+            "get_notifications",
+        ):
+            self.sync_recurring_expenses(current_user_id)
+        if method == "GET" and (endpoint.startswith("get_group/") or endpoint.startswith("get_expense/")):
+            self.sync_recurring_expenses(current_user_id)
 
         if method == "GET" and endpoint == "get_current_user":
             return "200 OK", {"user": self._current_user_payload(current_user_id)}, "json"
@@ -150,9 +160,11 @@ class SplitwiseBackendApp(object):
         index = 0
         while True:
             prefix = "users__%s__" % index
-            if prefix + "first_name" not in params and prefix + "user_id" not in params:
+            if prefix + "first_name" not in params and prefix + "user_id" not in params and prefix + "id" not in params:
                 break
             member_id = params.get(prefix + "user_id")
+            if member_id is None:
+                member_id = params.get(prefix + "id")
             if member_id is not None:
                 member_id = self._parse_int(member_id, "user id")
                 member = self._ensure_user(
@@ -182,6 +194,9 @@ class SplitwiseBackendApp(object):
             "updated_at": self._now(),
             "simplify_by_default": self._parse_bool(params.get("simplify_by_default"), False),
             "member_ids": members,
+            "owner_id": current_user_id,
+            "admin_ids": [],
+            "archived": False,
             "deleted": False,
         }
         self.state["groups"][group_id] = group
@@ -191,8 +206,8 @@ class SplitwiseBackendApp(object):
     def _handle_add_user_to_group(self, params, current_user_id):
         group_id = self._parse_int(params.get("group_id"), "group id")
         group = self._require_group(group_id)
-        if current_user_id not in group["member_ids"]:
-            raise ValueError("Only group members can add new users")
+        if not self._can_manage_group(group, current_user_id):
+            raise ValueError("Only group owners or admins can add new users")
         user_id = params.get("user_id") or params.get("id")
         if user_id is not None:
             user = self._ensure_user(
@@ -217,8 +232,8 @@ class SplitwiseBackendApp(object):
         if group_id == 0:
             raise ValueError("Group 0 cannot be deleted")
         group = self._require_group(group_id)
-        if current_user_id not in group["member_ids"]:
-            raise ValueError("Only group members can delete this group")
+        if not self._can_manage_group(group, current_user_id):
+            raise ValueError("Only group owners or admins can delete this group")
         group["deleted"] = True
         group["updated_at"] = self._now()
         self._add_notification("Group '%s' deleted" % group["name"], "group", group_id, current_user_id)
@@ -384,6 +399,22 @@ class SplitwiseBackendApp(object):
                 existing=(existing or {}).get("next_repeat"),
                 repeats=repeats,
             )
+        series_id = params.get("series_id")
+        if series_id in (None, ""):
+            series_id = (existing or {}).get("series_id")
+        if repeats and series_id in (None, ""):
+            series_id = self._next_id("recurring_series")
+        elif series_id not in (None, ""):
+            series_id = int(series_id)
+        series_root_expense_id = params.get("series_root_expense_id")
+        if series_root_expense_id in (None, ""):
+            series_root_expense_id = (existing or {}).get("series_root_expense_id")
+        if series_root_expense_id not in (None, ""):
+            series_root_expense_id = int(series_root_expense_id)
+        elif repeats:
+            series_root_expense_id = expense_id
+        series_paused = self._parse_bool(params.get("series_paused"), (existing or {}).get("series_paused", False))
+        series_cancelled = self._parse_bool(params.get("series_cancelled"), (existing or {}).get("series_cancelled", False))
         expense = {
             "id": expense_id,
             "group_id": group_id,
@@ -416,6 +447,11 @@ class SplitwiseBackendApp(object):
             "split_method": split_method,
             "payers": payers,
             "participants": participants,
+            "series_id": series_id,
+            "series_root_expense_id": series_root_expense_id,
+            "parent_expense_id": params.get("parent_expense_id") if params.get("parent_expense_id") is not None else (existing or {}).get("parent_expense_id"),
+            "series_paused": series_paused,
+            "series_cancelled": series_cancelled,
         }
         return expense
 
@@ -597,6 +633,11 @@ class SplitwiseBackendApp(object):
             "original_debts": repayments,
             "simplified_debts": repayments,
             "members": [self._friend_payload(member_id, current_user_id) for member_id in group["member_ids"]],
+            "owner_id": group.get("owner_id"),
+            "admin_ids": list(group.get("admin_ids") or []),
+            "archived": bool(group.get("archived")),
+            "current_user_role": self._group_role(group, current_user_id),
+            "can_manage": self._can_manage_group(group, current_user_id),
         }
 
     def _expense_payload(self, expense_id, current_user_id=None):
@@ -689,6 +730,11 @@ class SplitwiseBackendApp(object):
                 {"user_id": item["user_id"], "included": True, "split_value": item["owed_share"]}
                 for item in expense["user_shares"]
             ],
+            "series_id": expense.get("series_id"),
+            "series_root_expense_id": expense.get("series_root_expense_id"),
+            "parent_expense_id": expense.get("parent_expense_id"),
+            "series_paused": bool(expense.get("series_paused")),
+            "series_cancelled": bool(expense.get("series_cancelled")),
             "transaction_id": None,
         }
 
@@ -986,8 +1032,8 @@ class SplitwiseBackendApp(object):
 
     def update_group(self, current_user_id, group_id, name=None, whiteboard=None):
         group = self._require_group(int(group_id))
-        if current_user_id not in group["member_ids"]:
-            raise ValueError("Only group members can update this group")
+        if not self._can_manage_group(group, current_user_id):
+            raise ValueError("Only group owners or admins can update this group")
         if name is not None:
             name = name.strip()
             if not name:
@@ -998,6 +1044,125 @@ class SplitwiseBackendApp(object):
         group["updated_at"] = self._now()
         self._add_notification("Group '%s' updated" % group["name"], "group", group["id"], current_user_id)
         return self._group_payload(group["id"], current_user_id)
+
+    def add_group_member(self, current_user_id, group_id, user_id):
+        self._handle_add_user_to_group({"group_id": group_id, "user_id": user_id}, current_user_id)
+        return self._group_payload(int(group_id), current_user_id)
+
+    def remove_group_member(self, current_user_id, group_id, member_user_id):
+        group = self._require_group(int(group_id))
+        if not self._can_manage_group(group, current_user_id):
+            raise ValueError("Only group owners or admins can remove members")
+        member_user_id = int(member_user_id)
+        if member_user_id == group.get("owner_id"):
+            raise ValueError("Transfer ownership before removing the owner")
+        if member_user_id not in group["member_ids"]:
+            raise ValueError("That user is not in this group")
+        group["member_ids"] = [item for item in group["member_ids"] if item != member_user_id]
+        group["admin_ids"] = [item for item in group.get("admin_ids", []) if item != member_user_id]
+        group["updated_at"] = self._now()
+        member = self._require_user(member_user_id)
+        self._add_notification("%s removed from %s" % (member["first_name"], group["name"]), "group", group["id"], current_user_id)
+        return self._group_payload(group["id"], current_user_id)
+
+    def leave_group(self, current_user_id, group_id):
+        group = self._require_group(int(group_id))
+        if group["id"] == 0:
+            raise ValueError("You cannot leave the non-group expenses bucket")
+        if current_user_id not in group["member_ids"]:
+            raise ValueError("You are not a member of this group")
+        remaining = [item for item in group["member_ids"] if item != current_user_id]
+        if not remaining:
+            group["deleted"] = True
+        else:
+            group["member_ids"] = remaining
+            group["admin_ids"] = [item for item in group.get("admin_ids", []) if item != current_user_id]
+            if group.get("owner_id") == current_user_id:
+                next_owner = group["admin_ids"][0] if group["admin_ids"] else remaining[0]
+                group["owner_id"] = next_owner
+                group["admin_ids"] = [item for item in group["admin_ids"] if item != next_owner]
+        group["updated_at"] = self._now()
+        self._add_notification("%s left %s" % (self._require_user(current_user_id)["first_name"], group["name"]), "group", group["id"], current_user_id)
+        return {"left": True, "group_id": group["id"], "deleted": bool(group.get("deleted"))}
+
+    def set_group_admin(self, current_user_id, group_id, member_user_id, is_admin):
+        group = self._require_group(int(group_id))
+        if current_user_id != group.get("owner_id"):
+            raise ValueError("Only the group owner can manage admins")
+        member_user_id = int(member_user_id)
+        if member_user_id == group.get("owner_id"):
+            raise ValueError("The group owner is already the owner")
+        if member_user_id not in group["member_ids"]:
+            raise ValueError("That user is not in this group")
+        admin_ids = set(group.get("admin_ids") or [])
+        if is_admin:
+            admin_ids.add(member_user_id)
+        else:
+            admin_ids.discard(member_user_id)
+        group["admin_ids"] = sorted(admin_ids)
+        group["updated_at"] = self._now()
+        member = self._require_user(member_user_id)
+        self._add_notification(
+            "%s %s admin access in %s" % (member["first_name"], "received" if is_admin else "lost", group["name"]),
+            "group",
+            group["id"],
+            current_user_id,
+        )
+        return self._group_payload(group["id"], current_user_id)
+
+    def set_group_archived(self, current_user_id, group_id, archived):
+        group = self._require_group(int(group_id))
+        if not self._can_manage_group(group, current_user_id):
+            raise ValueError("Only group owners or admins can archive this group")
+        if group["id"] == 0:
+            raise ValueError("You cannot archive the non-group expenses bucket")
+        group["archived"] = bool(archived)
+        group["updated_at"] = self._now()
+        self._add_notification(
+            "Group '%s' %s" % (group["name"], "archived" if group["archived"] else "restored"),
+            "group",
+            group["id"],
+            current_user_id,
+        )
+        return self._group_payload(group["id"], current_user_id)
+
+    def pause_expense_series(self, current_user_id, series_id):
+        root = self._require_series_root(series_id, current_user_id)
+        root["series_paused"] = True
+        root["updated_at"] = self._now()
+        self._add_notification("Recurring series '%s' paused" % root["description"], "expense", root["id"], current_user_id)
+        return self._expense_payload(root["id"], current_user_id)
+
+    def resume_expense_series(self, current_user_id, series_id):
+        root = self._require_series_root(series_id, current_user_id)
+        root["series_paused"] = False
+        root["updated_at"] = self._now()
+        self._add_notification("Recurring series '%s' resumed" % root["description"], "expense", root["id"], current_user_id)
+        return self._expense_payload(root["id"], current_user_id)
+
+    def cancel_expense_series(self, current_user_id, series_id):
+        root = self._require_series_root(series_id, current_user_id)
+        root["series_cancelled"] = True
+        root["repeats"] = False
+        root["next_repeat"] = None
+        root["updated_at"] = self._now()
+        self._add_notification("Recurring series '%s' cancelled" % root["description"], "expense", root["id"], current_user_id)
+        return self._expense_payload(root["id"], current_user_id)
+
+    def update_expense_series(self, current_user_id, series_id, params):
+        root = self._require_series_root(series_id, current_user_id)
+        params = dict(params or {})
+        params["series_id"] = root["series_id"]
+        params["series_root_expense_id"] = root["series_root_expense_id"]
+        params["series_paused"] = root.get("series_paused", False)
+        params["series_cancelled"] = root.get("series_cancelled", False)
+        updated = self._build_expense_record(root["id"], params, current_user_id, existing=root)
+        updated["created_at"] = root["created_at"]
+        updated["series_id"] = root["series_id"]
+        updated["series_root_expense_id"] = root["series_root_expense_id"]
+        self.state["expenses"][root["id"]] = updated
+        self._add_notification("Recurring series '%s' updated" % updated["description"], "expense", updated["id"], current_user_id)
+        return self._expense_payload(updated["id"], current_user_id)
 
     def record_settlement(self, current_user_id, other_user_id, amount, group_id=None, note=None, date=None, from_user_id=None, to_user_id=None):
         other_user_id = int(other_user_id)
@@ -1193,6 +1358,16 @@ class SplitwiseBackendApp(object):
             raise KeyError(group_id)
         return group
 
+    def _group_role(self, group, user_id):
+        if user_id == group.get("owner_id"):
+            return "owner"
+        if user_id in (group.get("admin_ids") or []):
+            return "admin"
+        return "member"
+
+    def _can_manage_group(self, group, user_id):
+        return user_id == group.get("owner_id") or user_id in (group.get("admin_ids") or [])
+
     def _require_expense(self, expense_id):
         return self.state["expenses"][expense_id]
 
@@ -1209,6 +1384,72 @@ class SplitwiseBackendApp(object):
     def _picture_payload(self, user_id):
         base = "https://example.local/avatars/%s" % user_id
         return {"small": base + "/small.png", "medium": base + "/medium.png", "large": base + "/large.png"}
+
+    def _require_series_root(self, series_id, current_user_id):
+        series_id = int(series_id)
+        for expense in self.state["expenses"].values():
+            if expense.get("series_id") != series_id:
+                continue
+            if expense.get("series_root_expense_id") != expense["id"]:
+                continue
+            if not self._expense_visible_to_user(expense, current_user_id):
+                raise KeyError(series_id)
+            return expense
+        raise KeyError(series_id)
+
+    def sync_recurring_expenses(self, current_user_id=None):
+        del current_user_id
+        now = self._now()
+        roots = [
+            expense for expense in self.state["expenses"].values()
+            if expense.get("repeats")
+            and expense.get("series_id")
+            and expense.get("series_root_expense_id") == expense["id"]
+            and not expense.get("deleted_at")
+            and not expense.get("series_paused")
+            and not expense.get("series_cancelled")
+        ]
+        generated = False
+        for root in roots:
+            next_repeat = root.get("next_repeat")
+            loops = 0
+            # Cap catch-up generation at 24 instances per request so a corrupted or very old schedule cannot loop forever in one sync.
+            while next_repeat and next_repeat <= now and loops < 24:
+                if not self._series_instance_exists(root["series_id"], next_repeat):
+                    self._spawn_recurring_instance(root, next_repeat)
+                    generated = True
+                root["next_repeat"] = self._next_repeat_value(next_repeat, root["repeat_interval"], repeats=True)
+                root["updated_at"] = self._now()
+                next_repeat = root.get("next_repeat")
+                loops += 1
+        return generated
+
+    def _series_instance_exists(self, series_id, date_value):
+        for expense in self.state["expenses"].values():
+            if expense.get("deleted_at"):
+                continue
+            if expense.get("series_id") == series_id and expense.get("date") == date_value and expense.get("series_root_expense_id") != expense["id"]:
+                return True
+        return False
+
+    def _spawn_recurring_instance(self, root_expense, date_value):
+        expense_id = self._next_id("expense")
+        instance = {key: value for key, value in root_expense.items() if key not in ("id", "created_at", "updated_at", "date", "next_repeat", "repeats", "parent_expense_id")}
+        instance["id"] = expense_id
+        instance["date"] = date_value
+        instance["created_at"] = self._now()
+        instance["updated_at"] = instance["created_at"]
+        instance["repeats"] = False
+        instance["next_repeat"] = None
+        instance["parent_expense_id"] = root_expense["id"]
+        instance["series_root_expense_id"] = root_expense["id"]
+        instance["creation_method"] = "recurring"
+        instance["user_shares"] = [dict(item) for item in root_expense["user_shares"]]
+        instance["payers"] = [dict(item) for item in root_expense.get("payers", [])]
+        instance["participants"] = [dict(item) for item in root_expense.get("participants", [])]
+        self.state["expenses"][expense_id] = instance
+        self._add_notification("Recurring expense '%s' created" % root_expense["description"], "expense", expense_id, root_expense["created_by"])
+        return instance
 
     def _next_id(self, key):
         value = self.state["next_ids"][key]
@@ -1331,6 +1572,9 @@ def _default_state():
                 "updated_at": now,
                 "simplify_by_default": False,
                 "member_ids": [1, 2],
+                "owner_id": 1,
+                "admin_ids": [],
+                "archived": False,
                 "deleted": False,
             },
             1: {
@@ -1343,6 +1587,9 @@ def _default_state():
                 "updated_at": now,
                 "simplify_by_default": True,
                 "member_ids": [1, 2, 3],
+                "owner_id": 1,
+                "admin_ids": [2],
+                "archived": False,
                 "deleted": False,
             },
         },
@@ -1389,6 +1636,11 @@ def _default_state():
                     {"user_id": 2, "included": True, "split_value": "12.00"},
                     {"user_id": 3, "included": True, "split_value": "12.00"},
                 ],
+                "series_id": None,
+                "series_root_expense_id": None,
+                "parent_expense_id": None,
+                "series_paused": False,
+                "series_cancelled": False,
             }
         },
         "comments": {
@@ -1417,7 +1669,7 @@ def _default_state():
             {"currency_code": "EUR", "unit": "€"},
         ],
         "oauth1_request_tokens": {},
-        "next_ids": {"user": 4, "group": 2, "expense": 2, "comment": 2, "notification": 2, "friend_request": 1, "settlement": 1},
+        "next_ids": {"user": 4, "group": 2, "expense": 2, "comment": 2, "notification": 2, "friend_request": 1, "settlement": 1, "recurring_series": 1},
     }
     return state
 

@@ -573,6 +573,169 @@ class PwaAppTestCase(unittest.TestCase):
         alex_friend = next(item for item in friends_response['data'] if item['email'] == 'alex-local@example.com')
         self.assertEqual(alex_friend['balance'][0]['amount'], '0.00')
 
+    def test_local_pwa_supports_recurring_series_and_group_management_polish(self):
+        app = create_app(environment={})
+
+        status, _, owner, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={'first_name': 'Owner', 'email': 'owner-local@example.com', 'password': 'password123'},
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, admin, admin_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={'first_name': 'Admin', 'email': 'admin-local@example.com', 'password': 'password123'},
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, member, member_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={'first_name': 'Member', 'email': 'member-local@example.com', 'password': 'password123'},
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, _, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/createGroup',
+            payload={'group': {'name': 'Road trip', 'members': [
+                {'id': admin['user']['id'], 'first_name': 'Admin', 'email': 'admin-local@example.com'},
+                {'id': member['user']['id'], 'first_name': 'Member', 'email': 'member-local@example.com'},
+            ]}},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, groups_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/getGroups',
+            payload={},
+            cookie=owner_cookie,
+        )
+        group = next(item for item in groups_response['data'] if item['name'] == 'Road trip')
+
+        status, _, admin_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/groups/admin',
+            payload={'group_id': group['id'], 'user_id': admin['user']['id'], 'is_admin': True},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertIn(admin['user']['id'], admin_response['group']['admin_ids'])
+
+        status, _, archived_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/groups/archive',
+            payload={'group_id': group['id'], 'archived': True},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(archived_response['group']['archived'])
+
+        status, _, unarchived_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/groups/archive',
+            payload={'group_id': group['id'], 'archived': False},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertFalse(unarchived_response['group']['archived'])
+
+        status, _, recurring_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/createExpense',
+            payload={
+                'expense': {
+                    'group_id': group['id'],
+                    'description': 'Recurring hotel',
+                    'cost': '120.00',
+                    'date': '2026-03-20T12:00:00Z',
+                    'repeats': True,
+                    'repeat_interval': 'daily',
+                    'users': [
+                        {'id': owner['user']['id'], 'paid_share': '120.00', 'owed_share': '60.00'},
+                        {'id': admin['user']['id'], 'paid_share': '0.00', 'owed_share': '60.00'},
+                    ],
+                },
+            },
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        series_id = recurring_response['data']['expense']['series_id']
+
+        status, _, expenses_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/getExpenses',
+            payload={},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(any(item['series_id'] == series_id and item['id'] != recurring_response['data']['expense']['id'] for item in expenses_response['data']))
+
+        status, _, paused_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/expense-series/pause',
+            payload={'series_id': series_id},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(paused_response['expense']['series_paused'])
+
+        status, _, updated_series, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/expense-series/update',
+            payload={'series_id': series_id, 'expense': {'description': 'Recurring hotel updated', 'cost': '130.00', 'users': [
+                {'id': owner['user']['id'], 'paid_share': '130.00', 'owed_share': '65.00'},
+                {'id': admin['user']['id'], 'paid_share': '0.00', 'owed_share': '65.00'},
+            ]}},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(updated_series['expense']['description'], 'Recurring hotel updated')
+
+        status, _, cancelled_response, owner_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/expense-series/cancel',
+            payload={'series_id': series_id},
+            cookie=owner_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(cancelled_response['expense']['series_cancelled'])
+
+        status, _, _, admin_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/login',
+            payload={'email': 'admin-local@example.com', 'password': 'password123'},
+            cookie=admin_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, leave_response, admin_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/groups/leave',
+            payload={'group_id': group['id']},
+            cookie=admin_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(leave_response['result']['left'])
+
 
 if __name__ == '__main__':
     unittest.main()

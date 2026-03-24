@@ -406,8 +406,35 @@ class SplitwisePWAApp(object):
         if path == "/api/local/groups/update":
             return "200 OK", self._handle_local_group_update(payload, session), "json"
 
+        if path == "/api/local/groups/members/add":
+            return "200 OK", self._handle_local_group_member_add(payload, session), "json"
+
+        if path == "/api/local/groups/members/remove":
+            return "200 OK", self._handle_local_group_member_remove(payload, session), "json"
+
+        if path == "/api/local/groups/leave":
+            return "200 OK", self._handle_local_group_leave(payload, session), "json"
+
+        if path == "/api/local/groups/archive":
+            return "200 OK", self._handle_local_group_archive(payload, session), "json"
+
+        if path == "/api/local/groups/admin":
+            return "200 OK", self._handle_local_group_admin(payload, session), "json"
+
         if path == "/api/local/settlements":
             return "200 OK", self._handle_local_settlement(payload, session), "json"
+
+        if path == "/api/local/expense-series/update":
+            return "200 OK", self._handle_local_expense_series_update(payload, session), "json"
+
+        if path == "/api/local/expense-series/pause":
+            return "200 OK", self._handle_local_expense_series_pause(payload, session), "json"
+
+        if path == "/api/local/expense-series/resume":
+            return "200 OK", self._handle_local_expense_series_resume(payload, session), "json"
+
+        if path == "/api/local/expense-series/cancel":
+            return "200 OK", self._handle_local_expense_series_cancel(payload, session), "json"
 
         if path == "/api/session":
             self._merge_session(session, payload)
@@ -799,6 +826,31 @@ class SplitwisePWAApp(object):
         )
         return {"ok": True, "group": group}
 
+    def _handle_local_group_member_add(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        group = self.backend_app.add_group_member(user_id, payload.get("group_id"), payload.get("user_id"))
+        return {"ok": True, "group": group}
+
+    def _handle_local_group_member_remove(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        group = self.backend_app.remove_group_member(user_id, payload.get("group_id"), payload.get("user_id"))
+        return {"ok": True, "group": group}
+
+    def _handle_local_group_leave(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        result = self.backend_app.leave_group(user_id, payload.get("group_id"))
+        return {"ok": True, "result": result}
+
+    def _handle_local_group_archive(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        group = self.backend_app.set_group_archived(user_id, payload.get("group_id"), payload.get("archived"))
+        return {"ok": True, "group": group}
+
+    def _handle_local_group_admin(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        group = self.backend_app.set_group_admin(user_id, payload.get("group_id"), payload.get("user_id"), bool(payload.get("is_admin")))
+        return {"ok": True, "group": group}
+
     def _handle_local_settlement(self, payload, session):
         user_id = self._require_local_user_id(session)
         settlement = self.backend_app.record_settlement(
@@ -812,6 +864,33 @@ class SplitwisePWAApp(object):
             to_user_id=payload.get("to_user_id"),
         )
         return {"ok": True, "settlement": settlement}
+
+    def _handle_local_expense_series_update(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        expense = payload.get("expense", {})
+        series_id = payload.get("series_id") or expense.get("series_id")
+        adapter = LocalSplitwiseAdapter(self.backend_app, user_id, "http://local/")
+        updated = self.backend_app.update_expense_series(
+            user_id,
+            series_id,
+            adapter._expense_payload(self._build_expense(expense)),
+        )
+        return {"ok": True, "expense": updated}
+
+    def _handle_local_expense_series_pause(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        expense = self.backend_app.pause_expense_series(user_id, payload.get("series_id"))
+        return {"ok": True, "expense": expense}
+
+    def _handle_local_expense_series_resume(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        expense = self.backend_app.resume_expense_series(user_id, payload.get("series_id"))
+        return {"ok": True, "expense": expense}
+
+    def _handle_local_expense_series_cancel(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        expense = self.backend_app.cancel_expense_series(user_id, payload.get("series_id"))
+        return {"ok": True, "expense": expense}
 
     def _require_local_user_id(self, session):
         user_id = session.get("local_user_id")

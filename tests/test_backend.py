@@ -203,6 +203,84 @@ class BackendAppTestCase(unittest.TestCase):
         self.assertEqual(user_two['payer_amount'], '30.00')
         self.assertEqual(user_two['split_value'], '40')
 
+    def test_backend_materializes_recurring_series_and_supports_group_management(self):
+        app = create_backend_app()
+        owner = app.register_account('Owner', 'owner@example.com', 'password123')
+        admin = app.register_account('Admin', 'admin@example.com', 'password123')
+        member = app.register_account('Member', 'member@example.com', 'password123')
+        outsider = app.register_account('Out', 'out@example.com', 'password123')
+
+        created = app._handle_create_group(
+            {
+                'name': 'Trip fund',
+                'users__0__user_id': admin['id'],
+                'users__1__user_id': member['id'],
+            },
+            owner['id'],
+        )[1]['group']
+        group_id = created['id']
+
+        app.set_group_admin(owner['id'], group_id, admin['id'], True)
+        group = app.add_group_member(owner['id'], group_id, outsider['id'])
+        self.assertEqual(group['owner_id'], owner['id'])
+        self.assertIn(admin['id'], group['admin_ids'])
+        self.assertEqual(len(group['members']), 4)
+
+        group = app.remove_group_member(admin['id'], group_id, outsider['id'])
+        self.assertEqual(len(group['members']), 3)
+
+        leave_result = app.leave_group(owner['id'], group_id)
+        self.assertTrue(leave_result['left'])
+        promoted_group = app._group_payload(group_id, admin['id'])
+        self.assertEqual(promoted_group['owner_id'], admin['id'])
+
+        archived = app.set_group_archived(admin['id'], group_id, True)
+        self.assertTrue(archived['archived'])
+
+        status, _, created_expense = self._request(
+            app,
+            'POST',
+            '/api/v3.0/create_expense',
+            payload={
+                'group_id': group_id,
+                'description': 'Monthly rent',
+                'cost': '90.00',
+                'date': '2026-03-20T12:00:00Z',
+                'repeats': True,
+                'repeat_interval': 'daily',
+                'users__0__user_id': admin['id'],
+                'users__0__paid_share': '90.00',
+                'users__0__owed_share': '45.00',
+                'users__1__user_id': member['id'],
+                'users__1__paid_share': '0.00',
+                'users__1__owed_share': '45.00',
+            },
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(admin['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        series_id = created_expense['expenses'][0]['series_id']
+
+        status, _, expenses = self._request(
+            app,
+            'GET',
+            '/api/v3.0/get_expenses?group_id=%s' % group_id,
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(admin['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertGreaterEqual(len(expenses['expenses']), 2)
+        generated = [item for item in expenses['expenses'] if item['series_id'] == series_id and item['id'] != created_expense['expenses'][0]['id']]
+        self.assertTrue(generated)
+
+        paused = app.pause_expense_series(admin['id'], series_id)
+        self.assertTrue(paused['series_paused'])
+        updated = app.update_expense_series(admin['id'], series_id, {'description': 'Updated rent', 'cost': '100.00'})
+        self.assertEqual(updated['description'], 'Updated rent')
+        resumed = app.resume_expense_series(admin['id'], series_id)
+        self.assertFalse(resumed['series_paused'])
+        cancelled = app.cancel_expense_series(admin['id'], series_id)
+        self.assertTrue(cancelled['series_cancelled'])
+        self.assertFalse(cancelled['repeats'])
+
 
 @contextmanager
 def running_backend_server(app):

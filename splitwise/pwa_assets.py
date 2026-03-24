@@ -190,6 +190,7 @@ INDEX_HTML = """<!doctype html>
               </div>
               <div id="group-balance-summary" class="summary-pills"></div>
               <form id="update-group-form" class="form-stack compact-form">
+                <p id="group-role-copy" class="muted-copy">Only owners and admins can manage this group.</p>
                 <label>
                   Group name
                   <input id="update-group-name" name="name" autocomplete="off" placeholder="Selected group name">
@@ -200,8 +201,27 @@ INDEX_HTML = """<!doctype html>
                 </label>
                 <div class="action-row">
                   <button type="submit">Save group</button>
+                  <button id="archive-group-button" class="ghost" type="button">Archive group</button>
+                  <button id="leave-group-button" class="ghost" type="button">Leave group</button>
                   <button id="delete-group-button" class="ghost danger" type="button">Delete group</button>
                 </div>
+              </form>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Manage members</h2>
+                  <p>Add friends to this group and manage admin/member roles.</p>
+                </div>
+              </div>
+              <form id="group-member-add-form" class="form-stack compact-form">
+                <label>
+                  Add friend
+                  <select id="group-member-add-select" name="user_id">
+                    <option value="">No available friends</option>
+                  </select>
+                </label>
+                <button type="submit">Add member</button>
               </form>
             </section>
             <section class="panel screen-card">
@@ -244,6 +264,15 @@ INDEX_HTML = """<!doctype html>
                 </div>
               </div>
               <div id="group-expense-list" class="collection-list"></div>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Archived groups</h2>
+                  <p>Restore archived groups when you need them again.</p>
+                </div>
+              </div>
+              <div id="archived-group-list" class="collection-list"></div>
             </section>
           </section>
 
@@ -1648,6 +1677,7 @@ const state = {
   activityFilter: 'all',
   composer: {
     editingExpenseId: null,
+    editingSeriesId: null,
     friendId: null,
     groupId: 0,
     paidBy: 'self',
@@ -1736,13 +1766,19 @@ function bindElements() {
   elements.groupScreenSummary = document.getElementById('group-screen-summary');
   elements.groupBalanceSummary = document.getElementById('group-balance-summary');
   elements.updateGroupForm = document.getElementById('update-group-form');
+  elements.groupRoleCopy = document.getElementById('group-role-copy');
   elements.updateGroupName = document.getElementById('update-group-name');
   elements.updateGroupWhiteboard = document.getElementById('update-group-whiteboard');
+  elements.archiveGroupButton = document.getElementById('archive-group-button');
+  elements.leaveGroupButton = document.getElementById('leave-group-button');
   elements.deleteGroupButton = document.getElementById('delete-group-button');
+  elements.groupMemberAddForm = document.getElementById('group-member-add-form');
+  elements.groupMemberAddSelect = document.getElementById('group-member-add-select');
   elements.createGroupForm = document.getElementById('create-group-form');
   elements.createGroupMembers = document.getElementById('create-group-members');
   elements.groupMemberList = document.getElementById('group-member-list');
   elements.groupExpenseList = document.getElementById('group-expense-list');
+  elements.archivedGroupList = document.getElementById('archived-group-list');
   elements.activityStats = document.getElementById('activity-stats');
   elements.activityFeed = document.getElementById('activity-feed');
   elements.expenseDetailCard = document.getElementById('expense-detail-card');
@@ -2000,6 +2036,117 @@ function wireBaseInteractions() {
     }
   });
 
+  elements.archiveGroupButton.addEventListener('click', async () => {
+    if (!ensureAuthenticated('Archive a group')) {
+      return;
+    }
+    const group = currentGroup();
+    if (!group) {
+      showToast('Select a group first', 'error');
+      return;
+    }
+    const response = await request('/api/local/groups/archive', {
+      group_id: group.id,
+      archived: !group.archived,
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast(group.archived ? 'Group restored' : 'Group archived', 'success');
+    }
+  });
+
+  elements.leaveGroupButton.addEventListener('click', async () => {
+    if (!ensureAuthenticated('Leave a group')) {
+      return;
+    }
+    const group = currentGroup();
+    if (!group) {
+      showToast('Select a group first', 'error');
+      return;
+    }
+    const response = await request('/api/local/groups/leave', { group_id: group.id });
+    if (response) {
+      state.groupViewId = null;
+      if (state.composer.groupId === group.id) {
+        state.composer.groupId = 0;
+      }
+      await hydrateWorkspace(true);
+      showToast('Left group', 'success');
+    }
+  });
+
+  elements.groupMemberAddForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Add a group member')) {
+      return;
+    }
+    const group = currentGroup();
+    const userId = Number(elements.groupMemberAddSelect.value || 0);
+    if (!group || !userId) {
+      showToast('Choose a friend to add', 'error');
+      return;
+    }
+    const response = await request('/api/local/groups/members/add', {
+      group_id: group.id,
+      user_id: userId,
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast('Member added', 'success');
+    }
+  });
+
+  elements.groupMemberList.addEventListener('click', async (event) => {
+    const removeButton = event.target.closest('button[data-remove-group-user]');
+    const adminButton = event.target.closest('button[data-toggle-group-admin]');
+    if (!removeButton && !adminButton) {
+      return;
+    }
+    const group = currentGroup();
+    if (!group) {
+      return;
+    }
+    if (removeButton) {
+      const response = await request('/api/local/groups/members/remove', {
+        group_id: group.id,
+        user_id: Number(removeButton.dataset.removeGroupUser),
+      });
+      if (response) {
+        await hydrateWorkspace(true);
+        showToast('Member removed', 'success');
+      }
+      return;
+    }
+    if (adminButton) {
+      const userId = Number(adminButton.dataset.toggleGroupAdmin);
+      const isAdmin = adminButton.dataset.isAdmin !== 'true';
+      const response = await request('/api/local/groups/admin', {
+        group_id: group.id,
+        user_id: userId,
+        is_admin: isAdmin,
+      });
+      if (response) {
+        await hydrateWorkspace(true);
+        showToast(isAdmin ? 'Admin added' : 'Admin removed', 'success');
+      }
+    }
+  });
+
+  elements.archivedGroupList.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-restore-group]');
+    if (!button) {
+      return;
+    }
+    const response = await request('/api/local/groups/archive', {
+      group_id: Number(button.dataset.restoreGroup),
+      archived: false,
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast('Group restored', 'success');
+    }
+  });
+
   elements.quickExpenseForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     await saveQuickExpense();
@@ -2205,6 +2352,7 @@ function wireBaseInteractions() {
     if (response) {
       state.selectedExpenseId = null;
       state.composer.editingExpenseId = null;
+      state.composer.editingSeriesId = null;
       await hydrateWorkspace(true);
       renderCurrentScreen();
       showToast('Expense deleted', 'success');
@@ -2229,6 +2377,35 @@ function wireBaseInteractions() {
       await hydrateWorkspace(true);
       await loadExpenseComments(expense.id);
       showToast('Comment added', 'success');
+    }
+  });
+
+  elements.expenseDetailCard.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-series-action], button[data-edit-series]');
+    if (!button) {
+      return;
+    }
+    const expense = currentExpense();
+    if (!expense || !expense.series_id) {
+      return;
+    }
+    if (button.dataset.editSeries) {
+      const sourceExpense = findSeriesRootExpense(expense.series_id) || expense;
+      populateComposerFromExpense(sourceExpense);
+      state.composer.editingSeriesId = expense.series_id;
+      state.composer.editingExpenseId = sourceExpense.id;
+      navigateToScreen('add');
+      showToast('Editing future series', 'success');
+      return;
+    }
+    const action = button.dataset.seriesAction;
+    const route = action === 'pause'
+      ? '/api/local/expense-series/pause'
+      : (action === 'resume' ? '/api/local/expense-series/resume' : '/api/local/expense-series/cancel');
+    const response = await request(route, { series_id: expense.series_id });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast(action === 'cancel' ? 'Series cancelled' : `Series ${action}d`, 'success');
     }
   });
 }
@@ -2558,13 +2735,21 @@ async function saveQuickExpense() {
     expense.group_id = state.composer.groupId;
   }
 
-  const operation = state.composer.editingExpenseId ? 'updateExpense' : 'createExpense';
-  const response = await invokeOperation(operation, { expense });
+  let response;
+  if (state.composer.editingSeriesId) {
+    expense.series_id = state.composer.editingSeriesId;
+    response = await request('/api/local/expense-series/update', { series_id: state.composer.editingSeriesId, expense });
+  } else {
+    const operation = state.composer.editingExpenseId ? 'updateExpense' : 'createExpense';
+    response = await invokeOperation(operation, { expense });
+  }
   if (!response) {
     return;
   }
 
-  const createdExpense = response.data && response.data.expense ? response.data.expense : null;
+  const createdExpense = response.data && response.data.expense
+    ? response.data.expense
+    : (response.expense || null);
   if (createdExpense) {
     const existingExpenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
     state.dashboard.getExpenses = [createdExpense, ...existingExpenses].slice(0, 8);
@@ -2583,6 +2768,7 @@ async function saveQuickExpense() {
   elements.quickEmailReminder.checked = false;
   elements.quickReminderDays.value = '';
   state.composer.editingExpenseId = null;
+  state.composer.editingSeriesId = null;
   state.composer.paidBy = 'self';
   state.composer.splitMode = 'equal';
   state.composer.participants = [];
@@ -2742,7 +2928,7 @@ function renderComposerState() {
   initializeCustomSplitValues(false);
   renderParticipantEditor();
   if (state.composer.editingExpenseId) {
-    elements.quickExpenseSave.textContent = 'Update';
+    elements.quickExpenseSave.textContent = state.composer.editingSeriesId ? 'Update future series' : 'Update';
   } else {
     elements.quickExpenseSave.textContent = 'Save';
   }
@@ -2757,6 +2943,23 @@ function renderGroupScreen() {
     elements.groupBalanceSummary.innerHTML = '<div class="summary-pill"><span class="summary-label">Status</span><strong class="summary-value">Awaiting data</strong></div>';
     elements.groupMemberList.innerHTML = '<p class="empty-copy">No members available.</p>';
     elements.groupExpenseList.innerHTML = '<p class="empty-copy">No group expenses available.</p>';
+    elements.groupRoleCopy.textContent = 'Only owners and admins can manage a selected group.';
+    elements.groupMemberAddSelect.innerHTML = '<option value="">No available friends</option>';
+    elements.archivedGroupList.innerHTML = archivedGroups().length
+      ? archivedGroups().map((item) => `
+          <article class="list-row">
+            <div class="row-main">
+              <div class="row-copy">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span class="row-meta">${escapeHtml(item.members.length)} members</span>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="ghost compact-button" type="button" data-restore-group="${item.id}">Restore</button>
+            </div>
+          </article>
+        `).join('')
+      : '<p class="empty-copy">No archived groups.</p>';
     elements.updateGroupName.value = '';
     elements.updateGroupWhiteboard.value = '';
     return;
@@ -2764,6 +2967,7 @@ function renderGroupScreen() {
 
   const balances = group.members || [];
   const expenses = (state.dashboard.getExpenses || []).filter((expense) => expense.group_id === group.id);
+  const currentMemberId = currentUser() ? currentUser().id : null;
   elements.groupScreenTitle.textContent = group.name;
   elements.groupScreenSummary.textContent = group.whiteboard || `${balances.length} members • ${expenses.length} tracked expenses`;
   elements.groupBalanceSummary.innerHTML = `
@@ -2778,6 +2982,12 @@ function renderGroupScreen() {
   `;
   elements.updateGroupName.value = group.name || '';
   elements.updateGroupWhiteboard.value = group.whiteboard || '';
+  elements.groupRoleCopy.textContent = `You are the ${group.current_user_role || 'member'} for this group.`;
+  elements.archiveGroupButton.textContent = group.archived ? 'Restore group' : 'Archive group';
+  const addableFriends = availableFriends().filter((friend) => !balances.some((member) => member.id === friend.id));
+  elements.groupMemberAddSelect.innerHTML = addableFriends.length
+    ? ['<option value="">Choose a friend</option>'].concat(addableFriends.map((friend) => `<option value="${friend.id}">${escapeHtml(displayName(friend))}</option>`)).join('')
+    : '<option value="">No available friends</option>';
   elements.groupMemberList.innerHTML = balances.length
     ? balances.map((member) => `
         <article class="list-row">
@@ -2786,11 +2996,24 @@ function renderGroupScreen() {
             <div class="row-copy">
               <strong>${escapeHtml(displayName(member))}</strong>
               <span class="row-meta">${member.email ? escapeHtml(member.email) : 'Group member'}</span>
+              <div class="inline-badges">
+                ${member.id === group.owner_id ? '<span class="mini-badge">Owner</span>' : ''}
+                ${group.admin_ids && group.admin_ids.includes(member.id) ? '<span class="mini-badge">Admin</span>' : ''}
+                ${currentMemberId !== null && currentMemberId !== undefined && member.id === currentMemberId ? '<span class="mini-badge">You</span>' : ''}
+              </div>
             </div>
             <div class="amount-copy ${balanceClass(member.balances || member.balance)}">
               <strong>${escapeHtml(formatBalance(member.balances || member.balance))}</strong>
               <span class="row-meta">${escapeHtml(balanceLabel(member.balances || member.balance))}</span>
             </div>
+          </div>
+          <div class="action-row">
+            ${group.current_user_role === 'owner' && member.id !== group.owner_id
+              ? `<button class="ghost compact-button" type="button" data-toggle-group-admin="${member.id}" data-is-admin="${group.admin_ids && group.admin_ids.includes(member.id) ? 'true' : 'false'}">${group.admin_ids && group.admin_ids.includes(member.id) ? 'Remove admin' : 'Make admin'}</button>`
+              : ''}
+            ${group.can_manage && member.id !== group.owner_id && member.id !== currentMemberId
+              ? `<button class="ghost compact-button danger" type="button" data-remove-group-user="${member.id}">Remove</button>`
+              : ''}
           </div>
         </article>
       `).join('')
@@ -2804,6 +3027,9 @@ function renderGroupScreen() {
               <p class="muted-copy">${escapeHtml(expense.details || 'Split expense')} • ${escapeHtml(formatDateLabel(expense.date || expense.created_at))}</p>
               <div class="inline-badges">
                 ${expense.repeats ? `<span class="mini-badge">Repeats ${escapeHtml(expense.repeat_interval || 'monthly')}</span>` : ''}
+                ${expense.series_id && !expense.repeats ? '<span class="mini-badge">Series instance</span>' : ''}
+                ${expense.series_paused ? '<span class="mini-badge">Paused</span>' : ''}
+                ${expense.next_repeat ? `<span class="mini-badge">Next ${escapeHtml(formatDateLabel(expense.next_repeat))}</span>` : ''}
                 ${expense.email_reminder ? `<span class="mini-badge">Reminder ${escapeHtml(String(expense.email_reminder_in_advance || 0))}d</span>` : ''}
                 ${expense.payment ? '<span class="mini-badge">Payment</span>' : ''}
               </div>
@@ -2819,6 +3045,21 @@ function renderGroupScreen() {
         </article>
       `).join('')
     : '<p class="empty-copy">No expenses for this group yet.</p>';
+  elements.archivedGroupList.innerHTML = archivedGroups().length
+    ? archivedGroups().map((item) => `
+        <article class="list-row">
+          <div class="row-main">
+            <div class="row-copy">
+              <strong>${escapeHtml(item.name)}</strong>
+              <span class="row-meta">${escapeHtml(item.members.length)} members</span>
+            </div>
+          </div>
+          <div class="action-row">
+            <button class="ghost compact-button" type="button" data-restore-group="${item.id}">Restore</button>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No archived groups.</p>';
 }
 
 function renderActivityScreen() {
@@ -3020,7 +3261,15 @@ function updateConnectivity() {
 }
 
 function availableGroups() {
-  return Array.isArray(state.dashboard.getGroups) ? state.dashboard.getGroups.filter((group) => group.id !== 0) : [];
+  return Array.isArray(state.dashboard.getGroups)
+    ? state.dashboard.getGroups.filter((group) => group.id !== 0 && !group.archived)
+    : [];
+}
+
+function archivedGroups() {
+  return Array.isArray(state.dashboard.getGroups)
+    ? state.dashboard.getGroups.filter((group) => group.id !== 0 && group.archived)
+    : [];
 }
 
 function availableFriends() {
@@ -3036,6 +3285,11 @@ function currentGroup() {
     state.groupViewId = groups[0].id;
   }
   return groups.find((group) => group.id === state.groupViewId) || groups[0];
+}
+
+function findSeriesRootExpense(seriesId) {
+  const expenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
+  return expenses.find((expense) => expense.series_id === seriesId && expense.series_root_expense_id === expense.id) || null;
 }
 
 function selectedFriend() {
@@ -3454,9 +3708,19 @@ function renderExpenseDetail() {
     <span class="muted-copy">${escapeHtml(expense.details || 'No extra note')}</span>
     <div class="inline-badges">
       ${expense.repeats ? `<span class="mini-badge">Repeats ${escapeHtml(expense.repeat_interval || 'monthly')}</span>` : ''}
+      ${expense.series_id && !expense.repeats ? '<span class="mini-badge">Series instance</span>' : ''}
+      ${expense.next_repeat ? `<span class="mini-badge">Next ${escapeHtml(formatDateLabel(expense.next_repeat))}</span>` : ''}
+      ${expense.series_paused ? '<span class="mini-badge">Paused</span>' : ''}
       ${expense.email_reminder ? `<span class="mini-badge">Reminder ${escapeHtml(String(expense.email_reminder_in_advance || 0))}d</span>` : ''}
       ${expense.payment ? '<span class="mini-badge">Payment</span>' : ''}
     </div>
+    ${expense.series_id ? `
+      <div class="action-row">
+        <button class="ghost compact-button" type="button" data-edit-series="true">Edit future series</button>
+        <button class="ghost compact-button" type="button" data-series-action="${expense.series_paused ? 'resume' : 'pause'}">${expense.series_paused ? 'Resume series' : 'Pause series'}</button>
+        <button class="ghost compact-button danger" type="button" data-series-action="cancel">Cancel series</button>
+      </div>
+    ` : ''}
   `;
   elements.expenseCommentList.innerHTML = comments.length
     ? comments.map((comment) => `
@@ -3487,6 +3751,7 @@ function populateComposerFromExpense(expense) {
     ? String(expense.email_reminder_in_advance)
     : '';
   state.composer.editingExpenseId = expense.id;
+  state.composer.editingSeriesId = null;
   state.composer.noteVisible = Boolean(expense.details);
   state.composer.date = (expense.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
   state.composer.groupId = expense.group_id || 0;
@@ -3672,6 +3937,7 @@ function resetWorkspaceCache() {
   state.groupViewId = null;
   state.selectedExpenseId = null;
   state.composer.editingExpenseId = null;
+  state.composer.editingSeriesId = null;
   state.composer.friendId = null;
   state.composer.groupId = 0;
   state.composer.paidBy = 'self';
