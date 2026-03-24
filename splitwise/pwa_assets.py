@@ -2370,7 +2370,7 @@ async function saveQuickExpense() {
   const repeats = elements.quickRepeatInterval.value !== 'never';
   const expense = {
     description,
-    cost,
+    cost: formatMoney(totalCost),
     currency_code: defaultCurrencyCode(),
     split_equally: state.composer.splitMode === 'equal',
     details: elements.quickNoteInput.value.trim() || undefined,
@@ -2859,7 +2859,11 @@ function currentGroup() {
 
 function selectedFriend() {
   const friends = availableFriends();
-  return friends.find((friend) => friend.id === state.composer.friendId) || friends[0] || null;
+  const friend = friends.find((item) => item.id === state.composer.friendId) || friends[0] || null;
+  if (!friend && state.composer.paidBy === 'friend') {
+    state.composer.paidBy = 'self';
+  }
+  return friend;
 }
 
 function initializeCustomSplitValues(force) {
@@ -2914,6 +2918,7 @@ function resolveCustomShares(total) {
   if (yourShare < 0 || friendShare < 0) {
     return null;
   }
+  // Allow a one-cent tolerance to absorb floating-point precision noise while validating currency shares.
   if (Math.abs((yourShare + friendShare) - total) > CURRENCY_SHARE_SUM_TOLERANCE) {
     return null;
   }
