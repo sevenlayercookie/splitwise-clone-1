@@ -2756,6 +2756,7 @@ async function saveQuickExpense() {
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(state.dashboard));
     renderDashboardCache();
   }
+  await hydrateWorkspace(true);
 
   elements.quickDescription.value = '';
   elements.quickCost.value = '';

@@ -539,6 +539,18 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertEqual(status, '200 OK')
         expense_id = expense_response['data']['expense']['id']
 
+        status, _, friends_after_expense, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/getFriends',
+            payload={},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        alex_friend_after_expense = next((item for item in friends_after_expense['data'] if item['email'] == 'alex-local@example.com'), None)
+        self.assertIsNotNone(alex_friend_after_expense)
+        self.assertEqual(alex_friend_after_expense['balance'][0]['amount'], '10.00')
+
         status, _, settlement_response, jamie_cookie = self._request(
             app,
             'POST',
@@ -572,7 +584,8 @@ class PwaAppTestCase(unittest.TestCase):
             cookie=jamie_cookie,
         )
         self.assertEqual(status, '200 OK')
-        alex_friend = next(item for item in friends_response['data'] if item['email'] == 'alex-local@example.com')
+        alex_friend = next((item for item in friends_response['data'] if item['email'] == 'alex-local@example.com'), None)
+        self.assertIsNotNone(alex_friend)
         self.assertEqual(alex_friend['balance'][0]['amount'], '0.00')
 
     def test_local_pwa_supports_recurring_series_and_group_management_polish(self):
