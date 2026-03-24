@@ -1280,7 +1280,7 @@ textarea::placeholder {
 APP_JS = """const STORAGE_KEY = 'splitwise-pwa-used-operations';
 const RESULT_CACHE_KEY = 'splitwise-pwa-last-result';
 const DASHBOARD_CACHE_KEY = 'splitwise-pwa-dashboard';
-const SHARE_SUM_TOLERANCE = 0.01;
+const CURRENCY_SHARE_SUM_TOLERANCE = 0.01;
 
 const QUICK_ACTIONS = [
   ['Profile', 'getCurrentUser'],
@@ -1933,7 +1933,6 @@ function wireBaseInteractions() {
 
   elements.quickCost.addEventListener('input', () => {
     initializeCustomSplitValues(false);
-    renderComposerState();
   });
 
   elements.quickYourShare.addEventListener('input', () => {
@@ -2911,7 +2910,7 @@ function resolveCustomShares(total) {
   if (yourShare < 0 || friendShare < 0) {
     return null;
   }
-  if (Math.abs((yourShare + friendShare) - total) > SHARE_SUM_TOLERANCE) {
+  if (Math.abs((yourShare + friendShare) - total) > CURRENCY_SHARE_SUM_TOLERANCE) {
     return null;
   }
   return {
@@ -3022,9 +3021,14 @@ function populateComposerFromExpense(expense) {
 }
 
 function determinePaidBy(currentUserShare, otherUserShare) {
-  const currentPaid = Number((currentUserShare && currentUserShare.paid_share) || 0);
-  const otherPaid = Number((otherUserShare && otherUserShare.paid_share) || 0);
+  const currentPaid = parseShareAmount(currentUserShare && currentUserShare.paid_share);
+  const otherPaid = parseShareAmount(otherUserShare && otherUserShare.paid_share);
   return otherPaid > currentPaid ? 'friend' : 'self';
+}
+
+function parseShareAmount(value) {
+  const amount = Number.parseFloat(value || '0');
+  return Number.isFinite(amount) ? amount : 0;
 }
 
 function renderGroupComposer() {
