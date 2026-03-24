@@ -2544,9 +2544,7 @@ function renderComposerState() {
   const today = new Date().toISOString().slice(0, 10);
   elements.quickDateButton.textContent = state.composer.date === today ? 'Today' : state.composer.date;
   const friend = selectedFriend();
-  if (!friend && state.composer.paidBy === 'friend') {
-    state.composer.paidBy = 'self';
-  }
+  normalizePaidByState(friend);
   elements.quickPaidBy.value = state.composer.paidBy;
   elements.quickSplitMode.value = state.composer.splitMode;
   const payerLabel = state.composer.paidBy === 'friend' && friend ? friend.first_name : 'you';
@@ -2860,10 +2858,14 @@ function currentGroup() {
 function selectedFriend() {
   const friends = availableFriends();
   const friend = friends.find((item) => item.id === state.composer.friendId) || friends[0] || null;
+  normalizePaidByState(friend);
+  return friend;
+}
+
+function normalizePaidByState(friend) {
   if (!friend && state.composer.paidBy === 'friend') {
     state.composer.paidBy = 'self';
   }
-  return friend;
 }
 
 function initializeCustomSplitValues(force) {
@@ -2918,7 +2920,7 @@ function resolveCustomShares(total) {
   if (yourShare < 0 || friendShare < 0) {
     return null;
   }
-  // Allow a one-cent tolerance to absorb floating-point precision noise while validating currency shares.
+  // Allow a 1-cent tolerance to absorb floating-point precision noise while validating currency shares.
   if (Math.abs((yourShare + friendShare) - total) > CURRENCY_SHARE_SUM_TOLERANCE) {
     return null;
   }
