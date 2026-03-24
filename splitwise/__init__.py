@@ -19,6 +19,7 @@ Splitwise Python SDK provides a simple interface to access splitwise APIs
 """
 import json
 import io
+import os
 from splitwise.user import User, Friend, CurrentUser
 from splitwise.currency import Currency
 from splitwise.group import Group
@@ -109,7 +110,8 @@ class Splitwise(object):
 
     debug = False
 
-    def __init__(self, consumer_key, consumer_secret, access_token=None, oauth2_access_token=None, api_key=None):
+    def __init__(self, consumer_key, consumer_secret, access_token=None, oauth2_access_token=None, api_key=None,
+                 base_url=None, oauth_base_url=None):
         """
 
         Args:
@@ -126,6 +128,10 @@ class Splitwise(object):
         self.consumer_secret = consumer_secret
         self.auth = None
         self.api_key = api_key
+        self.base_url = self.__normalize_base_url(base_url or os.environ.get("SPLITWISE_BASE_URL"))
+        self.oauth_base_url = self.__normalize_base_url(
+            oauth_base_url or os.environ.get("SPLITWISE_OAUTH_BASE_URL") or self.base_url
+        )
         # If access token is present then set the Access token
         if access_token:
             self.setAccessToken(access_token)
@@ -143,7 +149,7 @@ class Splitwise(object):
               oauth_token_secret(str): Token secret that should be saved to redeem token
         """
         oauth = OAuth2Session(self.consumer_key, redirect_uri=redirect_uri, state=state)
-        authorization_url, state = oauth.authorization_url(Splitwise.OAUTH_AUTHORIZE_URL)
+        authorization_url, state = oauth.authorization_url(self.__resolve_url(Splitwise.OAUTH_AUTHORIZE_URL))
 
         return authorization_url, state
 
@@ -161,11 +167,11 @@ class Splitwise(object):
             client_secret=self.consumer_secret
         )
 
-        content = self.__makeRequest(Splitwise.REQUEST_TOKEN_URL, method='POST', auth=oauth1)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.REQUEST_TOKEN_URL), method='POST', auth=oauth1)
         credentials = parse_qs(content)
 
         return "%s?oauth_token=%s" % (
-            Splitwise.AUTHORIZE_URL, credentials.get('oauth_token')[0]
+            self.__resolve_url(Splitwise.AUTHORIZE_URL), credentials.get('oauth_token')[0]
         ), credentials.get('oauth_token_secret')[0]
 
     def getOAuth2AccessToken(self, code, redirect_uri):
@@ -184,7 +190,7 @@ class Splitwise(object):
         data = "client_id=%s&client_secret=%s&grant_type=authorization_code&code=%s&redirect_uri=%s" % (
             self.consumer_key, self.consumer_secret, code, redirect_uri)
 
-        content = self.__makeRequest(Splitwise.OAUTH2_TOKEN_URL, 'POST', data=data)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.OAUTH2_TOKEN_URL), 'POST', data=data)
         if content == "false":
             return None
 
@@ -214,7 +220,7 @@ class Splitwise(object):
         )
 
         try:
-            content = self.__makeRequest(Splitwise.ACCESS_TOKEN_URL, 'POST', auth=oauth1)
+            content = self.__makeRequest(self.__resolve_url(Splitwise.ACCESS_TOKEN_URL), 'POST', auth=oauth1)
         except SplitwiseUnauthorizedException as e:
             e.setMessage("Your oauth token could be expired or check your consumer id and secret")
             raise
@@ -302,6 +308,21 @@ class Splitwise(object):
 
         raise SplitwiseException("Unknown error happened", response)
 
+    @staticmethod
+    def __normalize_base_url(base_url):
+        if base_url is None:
+            return None
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            raise ValueError("base URLs must start with http:// or https://")
+        return base_url if base_url.endswith("/") else base_url + "/"
+
+    def __resolve_url(self, url):
+        if self.base_url and url.startswith(Splitwise.SPLITWISE_BASE_URL):
+            return self.base_url + url[len(Splitwise.SPLITWISE_BASE_URL):]
+        if self.oauth_base_url and url.startswith(Splitwise.OAUTH_BASE_URL):
+            return self.oauth_base_url + url[len(Splitwise.OAUTH_BASE_URL):]
+        return url
+
     def __prepareOptionsUrl(self, options={}):
         return "?"+urlencode(options)
 
@@ -311,7 +332,7 @@ class Splitwise(object):
         Returns:
             :obj:`splitwise.user.CurrentUser`: CurrentUser object containing user data
         """
-        content = self.__makeRequest(Splitwise.GET_CURRENT_USER_URL)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_CURRENT_USER_URL))
         content = json.loads(content)
         return CurrentUser(content["user"])
 
@@ -325,7 +346,7 @@ class Splitwise(object):
             :obj:`splitwise.user.User`: User object containing user data
         """
         try:
-            content = self.__makeRequest(Splitwise.GET_USER_URL + "/"+str(id))
+            content = self.__makeRequest(self.__resolve_url(Splitwise.GET_USER_URL + "/"+str(id)))
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to fetch user with id %d" % id)
             raise
@@ -355,7 +376,7 @@ class Splitwise(object):
         user_data = user.__dict__
 
         try:
-            content = self.__makeRequest(Splitwise.UPDATE_USER_URL, 'POST', user_data)
+            content = self.__makeRequest(self.__resolve_url(Splitwise.UPDATE_USER_URL), 'POST', user_data)
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to access user with id %d" % user.getId())
             raise
@@ -382,7 +403,7 @@ class Splitwise(object):
         Returns:
             :obj:`list` of :obj:`splitwise.user.Friend`: List of Friends
         """
-        content = self.__makeRequest(Splitwise.GET_FRIENDS_URL)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_FRIENDS_URL))
         content = json.loads(content)
 
         friends = []
@@ -398,7 +419,7 @@ class Splitwise(object):
         Returns:
             :obj:`list` of :obj:`splitwise.group.Group`: List of Groups
         """
-        content = self.__makeRequest(Splitwise.GET_GROUPS_URL)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_GROUPS_URL))
         content = json.loads(content)
 
         groups = []
@@ -414,7 +435,7 @@ class Splitwise(object):
         Returns:
             :obj:`list` of :obj:`splitwise.currency.Currency`: List of Currency
         """
-        content = self.__makeRequest(Splitwise.GET_CURRENCY_URL)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_CURRENCY_URL))
         content = json.loads(content)
 
         currencies = []
@@ -430,7 +451,7 @@ class Splitwise(object):
         Returns:
             :obj:`list` of :obj:`splitwise.category.Category`: List of Category
         """
-        content = self.__makeRequest(Splitwise.GET_CATEGORY_URL)
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_CATEGORY_URL))
         content = json.loads(content)
         categories = []
 
@@ -450,7 +471,7 @@ class Splitwise(object):
             :obj:`splitwise.group.Group`: Object representing a group
         """
         try:
-            content = self.__makeRequest(Splitwise.GET_GROUP_URL+"/"+str(id))
+            content = self.__makeRequest(self.__resolve_url(Splitwise.GET_GROUP_URL+"/"+str(id)))
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to fetch group with id %d" % id)
             raise
@@ -510,7 +531,7 @@ class Splitwise(object):
         url = Splitwise.GET_EXPENSES_URL
 
         url += self.__prepareOptionsUrl(options)
-        content = self.__makeRequest(url)
+        content = self.__makeRequest(self.__resolve_url(url))
         content = json.loads(content)
         expenses = []
         if "expenses" in content:
@@ -528,7 +549,7 @@ class Splitwise(object):
         Returns:
             :obj:`splitwise.expense.Expense`: Object representing an expense
         """
-        content = self.__makeRequest(Splitwise.GET_EXPENSE_URL+"/"+str(id))
+        content = self.__makeRequest(self.__resolve_url(Splitwise.GET_EXPENSE_URL+"/"+str(id)))
         content = json.loads(content)
         expense = None
         if "expense" in content:
@@ -573,7 +594,7 @@ class Splitwise(object):
             del expense_data["receiptPath"]
 
         content = self.__makeRequest(
-            Splitwise.CREATE_EXPENSE_URL, "POST", expense_data, files=files)
+            self.__resolve_url(Splitwise.CREATE_EXPENSE_URL), "POST", expense_data, files=files)
         content = json.loads(content)
         expense = None
         errors = None
@@ -648,7 +669,7 @@ class Splitwise(object):
         expense_data.pop("created_at", None)
 
         content = self.__makeRequest(
-            Splitwise.UPDATE_EXPENSE_URL+"/"+str(expense_id), "POST", expense_data, files=files)
+            self.__resolve_url(Splitwise.UPDATE_EXPENSE_URL+"/"+str(expense_id)), "POST", expense_data, files=files)
         content = json.loads(content)
         expense = None
         errors = None
@@ -682,7 +703,7 @@ class Splitwise(object):
         success = False
         try:
             content = self.__makeRequest(
-                Splitwise.DELETE_EXPENSE_URL+"/"+str(id), "POST")
+                self.__resolve_url(Splitwise.DELETE_EXPENSE_URL+"/"+str(id)), "POST")
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to access expense with id %d" % id)
             raise
@@ -721,7 +742,7 @@ class Splitwise(object):
             Splitwise.setUserArray(group_members, group_info)
 
         content = self.__makeRequest(
-            Splitwise.CREATE_GROUP_URL, "POST", group_info)
+            self.__resolve_url(Splitwise.CREATE_GROUP_URL), "POST", group_info)
         content = json.loads(content)
         group_detail = None
         errors = None
@@ -757,7 +778,7 @@ class Splitwise(object):
             del request_data["id"]
         try:
             content = self.__makeRequest(
-                Splitwise.ADD_USER_TO_GROUP_URL, "POST", request_data)
+                self.__resolve_url(Splitwise.ADD_USER_TO_GROUP_URL), "POST", request_data)
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to access group with id %d" % group_id)
             raise
@@ -797,7 +818,7 @@ class Splitwise(object):
         success = False
         try:
             content = self.__makeRequest(
-                Splitwise.DELETE_GROUP_URL+"/"+str(id), "POST")
+                self.__resolve_url(Splitwise.DELETE_GROUP_URL+"/"+str(id)), "POST")
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to access group with id %d" % id)
             raise
@@ -855,7 +876,7 @@ class Splitwise(object):
         """
 
         try:
-            content = self.__makeRequest(Splitwise.GET_COMMENTS_URL + "?expense_id=" + str(expense_id))
+            content = self.__makeRequest(self.__resolve_url(Splitwise.GET_COMMENTS_URL + "?expense_id=" + str(expense_id)))
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to fetch user with id %d" % expense_id)
             raise
@@ -897,7 +918,7 @@ class Splitwise(object):
 
         try:
             content = self.__makeRequest(
-                Splitwise.CREATE_COMMENT_URL, "POST", data)
+                self.__resolve_url(Splitwise.CREATE_COMMENT_URL), "POST", data)
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to access expense with id %d" % id)
             raise
@@ -930,7 +951,7 @@ class Splitwise(object):
         """
 
         try:
-            content = self.__makeRequest(Splitwise.GET_NOTIFICATIONS_URL)
+            content = self.__makeRequest(self.__resolve_url(Splitwise.GET_NOTIFICATIONS_URL))
         except SplitwiseNotAllowedException as e:
             e.setMessage("You are not allowed to fetch notifications")
             raise
