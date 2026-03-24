@@ -2462,6 +2462,8 @@ function renderComposerState() {
     : 'Paid by you and split equally';
   if (state.composer.editingExpenseId) {
     elements.quickExpenseSave.textContent = 'Update';
+  } else {
+    elements.quickExpenseSave.textContent = 'Save';
   }
 }
 

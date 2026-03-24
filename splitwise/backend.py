@@ -614,8 +614,6 @@ class SplitwiseBackendApp(object):
             currency = expense["currency_code"]
             totals[currency] += Decimal(user_map[user_id]["owed_share"]) - Decimal(user_map[user_id]["paid_share"])
         for settlement in self.state["settlements"].values():
-            if settlement.get("group_id") not in (None, 0):
-                pass
             if current_user_id not in (settlement["from_user_id"], settlement["to_user_id"]):
                 continue
             if user_id not in (settlement["from_user_id"], settlement["to_user_id"]):
