@@ -93,6 +93,71 @@ class BackendAppTestCase(unittest.TestCase):
         self.assertEqual(status, '200 OK')
         self.assertEqual([item['email'] for item in friends['friends']], ['sam@example.com'])
 
+    def test_backend_supports_friend_requests_profile_updates_settlements_and_recurring_metadata(self):
+        app = create_backend_app()
+        taylor = app.register_account('Taylor', 'taylor@example.com', 'password123')
+        jordan = app.register_account('Jordan', 'jordan@example.com', 'password123')
+
+        request_payload = app.send_friend_request(taylor['id'], email='jordan@example.com')
+        self.assertEqual(request_payload['status'], 'pending')
+
+        pending = app.list_friend_requests(jordan['id'])
+        self.assertEqual(len(pending['incoming']), 1)
+        self.assertEqual(pending['incoming'][0]['user']['email'], 'taylor@example.com')
+
+        accepted = app.respond_friend_request(jordan['id'], pending['incoming'][0]['id'], accept=True)
+        self.assertEqual(accepted['status'], 'accepted')
+        self.assertEqual(accepted['friend']['email'], 'taylor@example.com')
+
+        updated = app.update_account(taylor['id'], first_name='Taylor Updated', email='taylor+updated@example.com')
+        self.assertEqual(updated['first_name'], 'Taylor Updated')
+        self.assertEqual(updated['email'], 'taylor+updated@example.com')
+
+        password_update = app.update_password(taylor['id'], 'password123', 'newpassword123')
+        self.assertTrue(password_update['updated'])
+        self.assertEqual(app.authenticate_account('taylor+updated@example.com', 'newpassword123')['id'], taylor['id'])
+
+        status, _, created = self._request(
+            app,
+            'POST',
+            '/api/v3.0/create_expense',
+            payload={
+                'description': 'Gym membership',
+                'cost': '30.00',
+                'repeats': True,
+                'repeat_interval': 'monthly',
+                'email_reminder': True,
+                'email_reminder_in_advance': 2,
+                'users__0__user_id': taylor['id'],
+                'users__0__paid_share': '30.00',
+                'users__0__owed_share': '15.00',
+                'users__1__user_id': jordan['id'],
+                'users__1__paid_share': '0.00',
+                'users__1__owed_share': '15.00',
+            },
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(taylor['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        expense = created['expenses'][0]
+        self.assertTrue(expense['repeats'])
+        self.assertEqual(expense['repeat_interval'], 'monthly')
+        self.assertTrue(expense['email_reminder'])
+        self.assertEqual(expense['email_reminder_in_advance'], 2)
+        self.assertIsNotNone(expense['next_repeat'])
+
+        settlement = app.record_settlement(jordan['id'], taylor['id'], '15.00', from_user_id=jordan['id'], to_user_id=taylor['id'])
+        self.assertEqual(settlement['amount'], '15.00')
+
+        status, _, friends = self._request(
+            app,
+            'GET',
+            '/api/v3.0/get_friends',
+            headers={'HTTP_X_SPLITWISE_USER_ID': str(taylor['id'])},
+        )
+        self.assertEqual(status, '200 OK')
+        jordan_friend = next(item for item in friends['friends'] if item['email'] == 'jordan@example.com')
+        self.assertEqual(jordan_friend['balance'][0]['amount'], '0.00')
+
 
 @contextmanager
 def running_backend_server(app):

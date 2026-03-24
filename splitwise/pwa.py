@@ -252,6 +252,10 @@ class LocalSplitwiseAdapter(object):
             value = getattr(expense, field, None)
             if value is not None:
                 payload[field] = value
+        for field in ("repeats", "repeat_interval", "email_reminder", "email_reminder_in_advance", "next_repeat"):
+            value = getattr(expense, field, None)
+            if value is not None:
+                payload[field] = value
         if getattr(expense, "category", None) is not None and getattr(expense.category, "id", None) is not None:
             payload["category_id"] = expense.category.id
         if getattr(expense, "split_equally", None) is not None:
@@ -369,6 +373,27 @@ class SplitwisePWAApp(object):
 
         if path == "/api/local/friends":
             return "200 OK", self._handle_local_add_friend(payload, session), "json"
+
+        if path == "/api/local/friend-requests":
+            return "200 OK", self._handle_local_send_friend_request(payload, session), "json"
+
+        if path == "/api/local/friend-requests/list":
+            return "200 OK", self._handle_local_list_friend_requests(session), "json"
+
+        if path == "/api/local/friend-requests/respond":
+            return "200 OK", self._handle_local_respond_friend_request(payload, session), "json"
+
+        if path == "/api/local/profile":
+            return "200 OK", self._handle_local_profile_update(payload, session), "json"
+
+        if path == "/api/local/password":
+            return "200 OK", self._handle_local_password_update(payload, session), "json"
+
+        if path == "/api/local/groups/update":
+            return "200 OK", self._handle_local_group_update(payload, session), "json"
+
+        if path == "/api/local/settlements":
+            return "200 OK", self._handle_local_settlement(payload, session), "json"
 
         if path == "/api/session":
             self._merge_session(session, payload)
@@ -629,6 +654,9 @@ class SplitwisePWAApp(object):
                     user.setOwedShare(user_payload["owed_share"])
                 users.append(user)
             expense.setUsers(users)
+        for field in ("repeats", "repeat_interval", "email_reminder", "email_reminder_in_advance", "next_repeat"):
+            if field in payload:
+                setattr(expense, field, payload[field])
         return expense
 
     def _serialize(self, value):
@@ -698,6 +726,59 @@ class SplitwisePWAApp(object):
         user_id = self._require_local_user_id(session)
         friend = self.backend_app.add_friend(user_id, email=payload.get("email"), user_id=payload.get("user_id"))
         return {"ok": True, "friend": friend}
+
+    def _handle_local_send_friend_request(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        request_payload = self.backend_app.send_friend_request(user_id, email=payload.get("email"), user_id=payload.get("user_id"))
+        return {"ok": True, "request": request_payload}
+
+    def _handle_local_list_friend_requests(self, session):
+        user_id = self._require_local_user_id(session)
+        return {"ok": True, "requests": self.backend_app.list_friend_requests(user_id)}
+
+    def _handle_local_respond_friend_request(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        result = self.backend_app.respond_friend_request(user_id, payload.get("request_id"), accept=bool(payload.get("accept", True)))
+        return {"ok": True, "result": result}
+
+    def _handle_local_profile_update(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        user = self.backend_app.update_account(
+            user_id,
+            first_name=payload.get("first_name"),
+            last_name=payload.get("last_name"),
+            email=payload.get("email"),
+        )
+        return {"ok": True, "user": user}
+
+    def _handle_local_password_update(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        result = self.backend_app.update_password(user_id, payload.get("current_password"), payload.get("new_password"))
+        return {"ok": True, "result": result}
+
+    def _handle_local_group_update(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        group = self.backend_app.update_group(
+            user_id,
+            payload.get("group_id"),
+            name=payload.get("name"),
+            whiteboard=payload.get("whiteboard"),
+        )
+        return {"ok": True, "group": group}
+
+    def _handle_local_settlement(self, payload, session):
+        user_id = self._require_local_user_id(session)
+        settlement = self.backend_app.record_settlement(
+            user_id,
+            payload.get("other_user_id"),
+            payload.get("amount"),
+            group_id=payload.get("group_id"),
+            note=payload.get("note"),
+            date=payload.get("date"),
+            from_user_id=payload.get("from_user_id"),
+            to_user_id=payload.get("to_user_id"),
+        )
+        return {"ok": True, "settlement": settlement}
 
     def _require_local_user_id(self, session):
         user_id = session.get("local_user_id")

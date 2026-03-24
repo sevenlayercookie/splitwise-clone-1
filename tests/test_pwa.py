@@ -400,6 +400,163 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertEqual(status, '200 OK')
         self.assertTrue(any(group['name'] == 'Demo group' for group in groups_response['data']))
 
+    def test_local_pwa_supports_friend_requests_profile_updates_settlements_and_comments(self):
+        app = create_app(environment={})
+
+        status, _, alex, alex_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={
+                'first_name': 'Alex',
+                'email': 'alex-local@example.com',
+                'password': 'password123',
+            },
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, _, alex_cookie = self._request(app, 'POST', '/api/local/logout', payload={}, cookie=alex_cookie)
+        self.assertEqual(status, '200 OK')
+
+        status, _, jamie, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/register',
+            payload={
+                'first_name': 'Jamie',
+                'email': 'jamie-local@example.com',
+                'password': 'password123',
+            },
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, _, jamie_cookie = self._request(app, 'POST', '/api/local/logout', payload={}, cookie=jamie_cookie)
+        self.assertEqual(status, '200 OK')
+
+        status, _, _, alex_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/login',
+            payload={'email': 'alex-local@example.com', 'password': 'password123'},
+            cookie=alex_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, request_response, alex_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/friend-requests',
+            payload={'email': 'jamie-local@example.com'},
+            cookie=alex_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(request_response['request']['status'], 'pending')
+
+        status, _, _, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/login',
+            payload={'email': 'jamie-local@example.com', 'password': 'password123'},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+
+        status, _, pending, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/friend-requests/list',
+            payload={},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(len(pending['requests']['incoming']), 1)
+
+        status, _, accepted, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/friend-requests/respond',
+            payload={'request_id': pending['requests']['incoming'][0]['id'], 'accept': True},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(accepted['result']['status'], 'accepted')
+
+        status, _, updated_profile, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/profile',
+            payload={'first_name': 'Jamie Updated', 'email': 'jamie-updated@example.com'},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(updated_profile['user']['email'], 'jamie-updated@example.com')
+
+        status, _, password_response, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/password',
+            payload={'current_password': 'password123', 'new_password': 'newpassword123'},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertTrue(password_response['result']['updated'])
+
+        status, _, expense_response, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/createExpense',
+            payload={
+                'expense': {
+                    'description': 'Dinner',
+                    'cost': '20.00',
+                    'currency_code': 'USD',
+                    'users': [
+                        {'id': jamie['user']['id'], 'paid_share': '20.00', 'owed_share': '10.00'},
+                        {'id': alex['user']['id'], 'paid_share': '0.00', 'owed_share': '10.00'},
+                    ],
+                }
+            },
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        expense_id = expense_response['data']['expense']['id']
+
+        status, _, settlement_response, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/local/settlements',
+            payload={
+                'other_user_id': alex['user']['id'],
+                'amount': '10.00',
+                'from_user_id': alex['user']['id'],
+                'to_user_id': jamie['user']['id'],
+            },
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(settlement_response['settlement']['amount'], '10.00')
+
+        status, _, comment_response, jamie_cookie = self._request(
+            app,
+            'POST',
+            '/api/operations/createComment',
+            payload={'expense_id': expense_id, 'content': 'Paid back in cash'},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        self.assertEqual(comment_response['data']['comment']['content'], 'Paid back in cash')
+
+        status, _, friends_response, _ = self._request(
+            app,
+            'POST',
+            '/api/operations/getFriends',
+            payload={},
+            cookie=jamie_cookie,
+        )
+        self.assertEqual(status, '200 OK')
+        alex_friend = next(item for item in friends_response['data'] if item['email'] == 'alex-local@example.com')
+        self.assertEqual(alex_friend['balance'][0]['amount'], '0.00')
+
 
 if __name__ == '__main__':
     unittest.main()

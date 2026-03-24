@@ -114,6 +114,26 @@ INDEX_HTML = """<!doctype html>
                   Note
                   <textarea id="quick-note-input" name="quick_note" rows="3" placeholder="Add a note or receipt context"></textarea>
                 </label>
+                <div class="composer-grid">
+                  <label>
+                    Repeat
+                    <select id="quick-repeat-interval" name="quick_repeat_interval">
+                      <option value="never">Never</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </label>
+                  <label class="toggle-row">
+                    <input id="quick-email-reminder" name="quick_email_reminder" type="checkbox">
+                    <span>Email reminder</span>
+                  </label>
+                </div>
+                <label id="quick-reminder-days-row" class="note-row hidden">
+                  Remind me this many days before
+                  <input id="quick-reminder-days" name="quick_reminder_days" type="number" min="0" step="1" placeholder="1">
+                </label>
               </form>
             </section>
 
@@ -134,6 +154,20 @@ INDEX_HTML = """<!doctype html>
                 </div>
               </div>
               <div id="group-balance-summary" class="summary-pills"></div>
+              <form id="update-group-form" class="form-stack compact-form">
+                <label>
+                  Group name
+                  <input id="update-group-name" name="name" autocomplete="off" placeholder="Selected group name">
+                </label>
+                <label>
+                  Notes
+                  <input id="update-group-whiteboard" name="whiteboard" autocomplete="off" placeholder="Update the group summary">
+                </label>
+                <div class="action-row">
+                  <button type="submit">Save group</button>
+                  <button id="delete-group-button" class="ghost danger" type="button">Delete group</button>
+                </div>
+              </form>
             </section>
             <section class="panel screen-card">
               <div class="panel-heading compact-heading">
@@ -189,14 +223,35 @@ INDEX_HTML = """<!doctype html>
               <div id="activity-stats" class="summary-pills"></div>
               <div id="activity-feed" class="activity-feed"></div>
             </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Expense details</h2>
+                  <p>Inspect comments, edit the expense in the composer, or delete it.</p>
+                </div>
+              </div>
+              <div id="expense-detail-card" class="detail-card"></div>
+              <div class="action-row">
+                <button id="edit-expense-button" class="ghost" type="button">Edit selected expense</button>
+                <button id="delete-expense-button" class="ghost danger" type="button">Delete selected expense</button>
+              </div>
+              <div id="expense-comment-list" class="collection-list"></div>
+              <form id="expense-comment-form" class="form-stack compact-form">
+                <label>
+                  Add comment
+                  <input id="expense-comment-input" name="content" autocomplete="off" placeholder="Add a note for this expense">
+                </label>
+                <button type="submit">Post comment</button>
+              </form>
+            </section>
           </section>
 
           <section class="screen-panel" data-screen="balances">
             <section class="panel screen-card">
               <div class="panel-heading compact-heading">
                 <div>
-                  <h2>Add a friend</h2>
-                  <p>Invite an existing local account by email.</p>
+                  <h2>Send friend request</h2>
+                  <p>Invite an existing local account by email and let them accept it.</p>
                 </div>
               </div>
               <form id="friend-form" class="form-stack compact-form">
@@ -204,8 +259,18 @@ INDEX_HTML = """<!doctype html>
                   Friend email
                   <input name="email" type="email" autocomplete="email" placeholder="friend@example.com" required>
                 </label>
-                <button type="submit">Add friend</button>
+                <button type="submit">Send request</button>
               </form>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Pending requests</h2>
+                  <p>Accept incoming requests and track requests you already sent.</p>
+                </div>
+              </div>
+              <div id="incoming-request-list" class="collection-list"></div>
+              <div id="outgoing-request-list" class="collection-list"></div>
             </section>
             <section class="panel screen-card">
               <div class="panel-heading compact-heading">
@@ -215,6 +280,40 @@ INDEX_HTML = """<!doctype html>
                 </div>
               </div>
               <div id="balance-list" class="collection-list"></div>
+            </section>
+            <section class="panel screen-card">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h2>Profile</h2>
+                  <p>Update your local account details without leaving the app.</p>
+                </div>
+              </div>
+              <form id="profile-form" class="form-stack compact-form">
+                <label>
+                  First name
+                  <input id="profile-first-name" name="first_name" autocomplete="given-name" placeholder="Alex" required>
+                </label>
+                <label>
+                  Last name
+                  <input id="profile-last-name" name="last_name" autocomplete="family-name" placeholder="Example">
+                </label>
+                <label>
+                  Email
+                  <input id="profile-email" name="email" type="email" autocomplete="email" placeholder="alex@example.com" required>
+                </label>
+                <button type="submit">Save profile</button>
+              </form>
+              <form id="password-form" class="form-stack compact-form">
+                <label>
+                  Current password
+                  <input name="current_password" type="password" autocomplete="current-password" placeholder="Current password" required>
+                </label>
+                <label>
+                  New password
+                  <input name="new_password" type="password" autocomplete="new-password" placeholder="New password" required>
+                </label>
+                <button type="submit">Update password</button>
+              </form>
             </section>
           </section>
 
@@ -871,6 +970,13 @@ textarea::placeholder {
   gap: 0.9rem;
 }
 
+.composer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
 .auth-form h3 {
   margin: 0;
   font-size: 1rem;
@@ -922,6 +1028,43 @@ textarea::placeholder {
 .selection-option span:last-child {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-weight: 600;
+}
+
+.toggle-row input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.detail-card {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: #f8fafc;
+}
+
+.detail-card strong {
+  font-size: 1rem;
+}
+
+.danger {
+  color: #c73c52;
+  border-color: rgba(199, 60, 82, 0.25);
 }
 
 .coverage-board {
@@ -1376,8 +1519,10 @@ const state = {
   workspaceHydrated: false,
   screen: localStorage.getItem(SCREEN_KEY) || 'add',
   groupViewId: null,
+  selectedExpenseId: null,
   activityFilter: 'all',
   composer: {
+    editingExpenseId: null,
     friendId: null,
     groupId: 0,
     date: new Date().toISOString().slice(0, 10),
@@ -1439,6 +1584,10 @@ function bindElements() {
   elements.quickNoteButton = document.getElementById('quick-note-button');
   elements.quickNoteRow = document.getElementById('quick-note-row');
   elements.quickNoteInput = document.getElementById('quick-note-input');
+  elements.quickRepeatInterval = document.getElementById('quick-repeat-interval');
+  elements.quickEmailReminder = document.getElementById('quick-email-reminder');
+  elements.quickReminderDaysRow = document.getElementById('quick-reminder-days-row');
+  elements.quickReminderDays = document.getElementById('quick-reminder-days');
   elements.openToolsButton = document.getElementById('open-tools-button');
   elements.credentialsPanel = document.getElementById('credentials-panel');
   elements.participantLabel = document.getElementById('participant-label');
@@ -1448,14 +1597,31 @@ function bindElements() {
   elements.groupScreenTitle = document.getElementById('group-screen-title');
   elements.groupScreenSummary = document.getElementById('group-screen-summary');
   elements.groupBalanceSummary = document.getElementById('group-balance-summary');
+  elements.updateGroupForm = document.getElementById('update-group-form');
+  elements.updateGroupName = document.getElementById('update-group-name');
+  elements.updateGroupWhiteboard = document.getElementById('update-group-whiteboard');
+  elements.deleteGroupButton = document.getElementById('delete-group-button');
   elements.createGroupForm = document.getElementById('create-group-form');
   elements.createGroupMembers = document.getElementById('create-group-members');
   elements.groupMemberList = document.getElementById('group-member-list');
   elements.groupExpenseList = document.getElementById('group-expense-list');
   elements.activityStats = document.getElementById('activity-stats');
   elements.activityFeed = document.getElementById('activity-feed');
+  elements.expenseDetailCard = document.getElementById('expense-detail-card');
+  elements.editExpenseButton = document.getElementById('edit-expense-button');
+  elements.deleteExpenseButton = document.getElementById('delete-expense-button');
+  elements.expenseCommentList = document.getElementById('expense-comment-list');
+  elements.expenseCommentForm = document.getElementById('expense-comment-form');
+  elements.expenseCommentInput = document.getElementById('expense-comment-input');
   elements.friendForm = document.getElementById('friend-form');
+  elements.incomingRequestList = document.getElementById('incoming-request-list');
+  elements.outgoingRequestList = document.getElementById('outgoing-request-list');
   elements.balanceList = document.getElementById('balance-list');
+  elements.profileForm = document.getElementById('profile-form');
+  elements.profileFirstName = document.getElementById('profile-first-name');
+  elements.profileLastName = document.getElementById('profile-last-name');
+  elements.profileEmail = document.getElementById('profile-email');
+  elements.passwordForm = document.getElementById('password-form');
 }
 
 function wireBaseInteractions() {
@@ -1576,13 +1742,48 @@ function wireBaseInteractions() {
     }
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const response = await request('/api/local/friends', {
+    const response = await request('/api/local/friend-requests', {
       email: (form.get('email') || '').toString().trim(),
     });
     if (response) {
       formElement.reset();
       await hydrateWorkspace(true);
-      showToast('Friend added', 'success');
+      showToast('Friend request sent', 'success');
+    }
+  });
+
+  elements.profileForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Update your profile')) {
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    const response = await request('/api/local/profile', {
+      first_name: (form.get('first_name') || '').toString().trim(),
+      last_name: (form.get('last_name') || '').toString().trim(),
+      email: (form.get('email') || '').toString().trim(),
+    });
+    if (response) {
+      await loadConfig();
+      await hydrateWorkspace(true);
+      showToast('Profile updated', 'success');
+    }
+  });
+
+  elements.passwordForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Update your password')) {
+      return;
+    }
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const response = await request('/api/local/password', {
+      current_password: (form.get('current_password') || '').toString(),
+      new_password: (form.get('new_password') || '').toString(),
+    });
+    if (response) {
+      formElement.reset();
+      showToast('Password updated', 'success');
     }
   });
 
@@ -1618,6 +1819,46 @@ function wireBaseInteractions() {
         state.composer.groupId = group.id;
       }
       navigateToScreen('group');
+    }
+  });
+
+  elements.updateGroupForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!ensureAuthenticated('Update a group')) {
+      return;
+    }
+    const group = currentGroup();
+    if (!group) {
+      showToast('Select a group first', 'error');
+      return;
+    }
+    const form = new FormData(event.currentTarget);
+    const response = await request('/api/local/groups/update', {
+      group_id: group.id,
+      name: (form.get('name') || '').toString().trim(),
+      whiteboard: (form.get('whiteboard') || '').toString().trim(),
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast('Group updated', 'success');
+    }
+  });
+
+  elements.deleteGroupButton.addEventListener('click', async () => {
+    if (!ensureAuthenticated('Delete a group')) {
+      return;
+    }
+    const group = currentGroup();
+    if (!group) {
+      showToast('Select a group first', 'error');
+      return;
+    }
+    const response = await invokeOperation('deleteGroup', { id: group.id }, { silent: true });
+    if (response) {
+      state.groupViewId = null;
+      state.composer.groupId = 0;
+      await hydrateWorkspace(true);
+      showToast('Group deleted', 'success');
     }
   });
 
@@ -1657,6 +1898,10 @@ function wireBaseInteractions() {
     }
   });
 
+  elements.quickEmailReminder.addEventListener('change', () => {
+    renderComposerState();
+  });
+
   elements.quickReceiptButton.addEventListener('click', () => {
     elements.credentialsPanel.open = true;
     document.getElementById('lab-panel').open = true;
@@ -1687,6 +1932,119 @@ function wireBaseInteractions() {
     if (button.dataset.filter) {
       state.activityFilter = button.dataset.filter;
       renderCurrentScreen();
+    }
+  });
+
+  elements.groupExpenseList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-expense-id]');
+    if (!button) {
+      return;
+    }
+    selectExpense(Number(button.dataset.expenseId), true);
+  });
+
+  elements.activityFeed.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-expense-id]');
+    if (!button) {
+      return;
+    }
+    selectExpense(Number(button.dataset.expenseId), false);
+  });
+
+  elements.incomingRequestList.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-request-id][data-accept]');
+    if (!button) {
+      return;
+    }
+    const response = await request('/api/local/friend-requests/respond', {
+      request_id: Number(button.dataset.requestId),
+      accept: button.dataset.accept === 'true',
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast(button.dataset.accept === 'true' ? 'Friend request accepted' : 'Friend request declined', 'success');
+    }
+  });
+
+  elements.balanceList.addEventListener('click', async (event) => {
+    const button = event.target.closest('button[data-settle-friend-id]');
+    if (!button) {
+      return;
+    }
+    const friend = availableFriends().find((item) => item.id === Number(button.dataset.settleFriendId));
+    if (!friend) {
+      return;
+    }
+    const primary = Array.isArray(friend.balances || friend.balance) ? (friend.balances || friend.balance)[0] : null;
+    const amount = primary ? Math.abs(Number(primary.amount || 0)) : 0;
+    if (!amount) {
+      showToast('This balance is already settled', 'success');
+      return;
+    }
+    const currentUser = state.dashboard.getCurrentUser;
+    const payerId = Number(primary.amount || 0) < 0 ? currentUser.id : friend.id;
+    const receiverId = payerId === currentUser.id ? friend.id : currentUser.id;
+    const response = await request('/api/local/settlements', {
+      other_user_id: friend.id,
+      amount: formatMoney(amount),
+      from_user_id: payerId,
+      to_user_id: receiverId,
+      note: `Settlement between ${displayName(currentUser)} and ${displayName(friend)}`,
+    });
+    if (response) {
+      await hydrateWorkspace(true);
+      showToast('Settlement recorded', 'success');
+    }
+  });
+
+  elements.editExpenseButton.addEventListener('click', () => {
+    const expense = currentExpense();
+    if (!expense) {
+      showToast('Select an expense first', 'error');
+      return;
+    }
+    if (!Array.isArray(expense.users) || expense.users.length !== 2) {
+      showToast('Inline editing currently supports two-person expenses', 'error');
+      return;
+    }
+    populateComposerFromExpense(expense);
+    navigateToScreen('add');
+  });
+
+  elements.deleteExpenseButton.addEventListener('click', async () => {
+    const expense = currentExpense();
+    if (!expense) {
+      showToast('Select an expense first', 'error');
+      return;
+    }
+    const response = await invokeOperation('deleteExpense', { id: expense.id }, { silent: true });
+    if (response) {
+      state.selectedExpenseId = null;
+      state.composer.editingExpenseId = null;
+      await hydrateWorkspace(true);
+      renderCurrentScreen();
+      showToast('Expense deleted', 'success');
+    }
+  });
+
+  elements.expenseCommentForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const expense = currentExpense();
+    if (!expense) {
+      showToast('Select an expense first', 'error');
+      return;
+    }
+    const content = elements.expenseCommentInput.value.trim();
+    if (!content) {
+      showToast('Comment text is required', 'error');
+      return;
+    }
+    const response = await invokeOperation('createComment', { expense_id: expense.id, content }, { silent: true, preserveResult: true });
+    if (response) {
+      elements.expenseCommentInput.value = '';
+      await hydrateWorkspace(true);
+      await loadExpenseComments(expense.id);
+      showToast('Comment added', 'success');
     }
   });
 }
@@ -1729,6 +2087,12 @@ async function hydrateWorkspace(forceRefresh) {
   state.workspaceHydrated = true;
   for (const [, operation] of QUICK_ACTIONS) {
     await invokeOperation(operation, {}, { silent: true, preserveResult: true });
+  }
+  const requestsResponse = await request('/api/local/friend-requests/list', {}, true);
+  state.dashboard.localFriendRequests = requestsResponse && requestsResponse.requests ? requestsResponse.requests : { incoming: [], outgoing: [] };
+  localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(state.dashboard));
+  if (state.selectedExpenseId) {
+    await loadExpenseComments(state.selectedExpenseId);
   }
   renderCurrentScreen();
   renderDashboardCache();
@@ -1779,8 +2143,14 @@ function renderAuthState() {
   if (authenticated) {
     const user = state.config.local_user;
     elements.authUserCopy.textContent = `${displayName(user)} • ${user.email || 'Local account'}`;
+    elements.profileFirstName.value = user.first_name || '';
+    elements.profileLastName.value = user.last_name || '';
+    elements.profileEmail.value = user.email || '';
   } else {
     elements.authUserCopy.textContent = 'Signed out.';
+    elements.profileFirstName.value = '';
+    elements.profileLastName.value = '';
+    elements.profileEmail.value = '';
   }
 }
 
@@ -1917,6 +2287,7 @@ async function saveQuickExpense() {
   }
 
   const equalShare = splitAmount(cost, 2);
+  const repeats = elements.quickRepeatInterval.value !== 'never';
   const expense = {
     description,
     cost,
@@ -1924,16 +2295,24 @@ async function saveQuickExpense() {
     split_equally: true,
     details: elements.quickNoteInput.value.trim() || undefined,
     date: `${state.composer.date}T12:00:00Z`,
+    repeats,
+    repeat_interval: elements.quickRepeatInterval.value,
+    email_reminder: elements.quickEmailReminder.checked,
+    email_reminder_in_advance: elements.quickEmailReminder.checked ? Number(elements.quickReminderDays.value || 0) : -1,
     users: [
       { id: owner.id, paid_share: formatMoney(cost), owed_share: equalShare },
       { id: companion.id, paid_share: '0.00', owed_share: equalShare },
     ],
   };
+  if (state.composer.editingExpenseId) {
+    expense.id = state.composer.editingExpenseId;
+  }
   if (state.composer.groupId) {
     expense.group_id = state.composer.groupId;
   }
 
-  const response = await invokeOperation('createExpense', { expense });
+  const operation = state.composer.editingExpenseId ? 'updateExpense' : 'createExpense';
+  const response = await invokeOperation(operation, { expense });
   if (!response) {
     return;
   }
@@ -1949,6 +2328,10 @@ async function saveQuickExpense() {
   elements.quickDescription.value = '';
   elements.quickCost.value = '';
   elements.quickNoteInput.value = '';
+  elements.quickRepeatInterval.value = 'never';
+  elements.quickEmailReminder.checked = false;
+  elements.quickReminderDays.value = '';
+  state.composer.editingExpenseId = null;
   state.composer.noteVisible = false;
   renderCurrentScreen();
 }
@@ -2067,6 +2450,7 @@ function renderChipPlaceholder(label) {
 
 function renderComposerState() {
   elements.quickNoteRow.classList.toggle('hidden', !state.composer.noteVisible);
+  elements.quickReminderDaysRow.classList.toggle('hidden', !elements.quickEmailReminder.checked);
   const groups = availableGroups();
   const selectedGroup = groups.find((group) => group.id === state.composer.groupId);
   elements.quickGroupButton.textContent = selectedGroup ? selectedGroup.name : 'No group';
@@ -2076,6 +2460,9 @@ function renderComposerState() {
   elements.quickSplitButton.textContent = friend
     ? `Paid by you and split equally with ${friend.first_name}`
     : 'Paid by you and split equally';
+  if (state.composer.editingExpenseId) {
+    elements.quickExpenseSave.textContent = 'Update';
+  }
 }
 
 function renderGroupScreen() {
@@ -2087,6 +2474,8 @@ function renderGroupScreen() {
     elements.groupBalanceSummary.innerHTML = '<div class="summary-pill"><span class="summary-label">Status</span><strong class="summary-value">Awaiting data</strong></div>';
     elements.groupMemberList.innerHTML = '<p class="empty-copy">No members available.</p>';
     elements.groupExpenseList.innerHTML = '<p class="empty-copy">No group expenses available.</p>';
+    elements.updateGroupName.value = '';
+    elements.updateGroupWhiteboard.value = '';
     return;
   }
 
@@ -2104,6 +2493,8 @@ function renderGroupScreen() {
       <strong class="summary-value">${expenses.length}</strong>
     </div>
   `;
+  elements.updateGroupName.value = group.name || '';
+  elements.updateGroupWhiteboard.value = group.whiteboard || '';
   elements.groupMemberList.innerHTML = balances.length
     ? balances.map((member) => `
         <article class="list-row">
@@ -2128,11 +2519,19 @@ function renderGroupScreen() {
             <div class="row-copy">
               <strong>${escapeHtml(expense.description || 'Expense')}</strong>
               <p class="muted-copy">${escapeHtml(expense.details || 'Split expense')} • ${escapeHtml(formatDateLabel(expense.date || expense.created_at))}</p>
+              <div class="inline-badges">
+                ${expense.repeats ? `<span class="mini-badge">Repeats ${escapeHtml(expense.repeat_interval || 'monthly')}</span>` : ''}
+                ${expense.email_reminder ? `<span class="mini-badge">Reminder ${escapeHtml(String(expense.email_reminder_in_advance || 0))}d</span>` : ''}
+                ${expense.payment ? '<span class="mini-badge">Payment</span>' : ''}
+              </div>
             </div>
             <div class="amount-copy amount-negative">
               <strong>${escapeHtml((expense.currency_code || defaultCurrencyCode()) + ' ' + formatMoney(expense.cost || '0'))}</strong>
               <span class="row-meta">${escapeHtml(expense.group_id === 0 ? 'non-group' : 'group expense')}</span>
             </div>
+          </div>
+          <div class="action-row">
+            <button class="ghost compact-button" type="button" data-expense-id="${expense.id}">Manage expense</button>
           </div>
         </article>
       `).join('')
@@ -2172,13 +2571,44 @@ function renderActivityScreen() {
           </div>
           <strong class="activity-title">${escapeHtml(item.title)}</strong>
           <p class="activity-body">${escapeHtml(item.body)}</p>
+          ${item.expenseId ? `<div class="action-row"><button class="ghost compact-button" type="button" data-expense-id="${item.expenseId}">Open comments</button></div>` : ''}
         </article>
       `).join('')
     : '<p class="empty-copy">No recent activity yet.</p>';
+  renderExpenseDetail();
 }
 
 function renderBalancesScreen() {
   const friends = availableFriends();
+  const requests = state.dashboard.localFriendRequests || { incoming: [], outgoing: [] };
+  elements.incomingRequestList.innerHTML = requests.incoming && requests.incoming.length
+    ? requests.incoming.map((request) => `
+        <article class="list-row">
+          <div class="row-main">
+            <div class="row-copy">
+              <strong>${escapeHtml(displayName(request.user))}</strong>
+              <span class="row-meta">${escapeHtml(request.user.email || 'Local account')}</span>
+            </div>
+          </div>
+          <div class="action-row">
+            <button class="compact-button" type="button" data-request-id="${request.id}" data-accept="true">Accept</button>
+            <button class="ghost compact-button danger" type="button" data-request-id="${request.id}" data-accept="false">Decline</button>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No incoming requests.</p>';
+  elements.outgoingRequestList.innerHTML = requests.outgoing && requests.outgoing.length
+    ? requests.outgoing.map((request) => `
+        <article class="list-row">
+          <div class="row-main">
+            <div class="row-copy">
+              <strong>${escapeHtml(displayName(request.user))}</strong>
+              <span class="row-meta">Waiting for response</span>
+            </div>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No outgoing requests.</p>';
   elements.balanceList.innerHTML = friends.length
     ? friends.slice(0, 8).map((friend) => `
         <article class="list-row">
@@ -2195,6 +2625,9 @@ function renderBalancesScreen() {
               <strong>${escapeHtml(formatBalance(friend.balances || friend.balance))}</strong>
               <span class="row-meta">${escapeHtml(balanceLabel(friend.balances || friend.balance))}</span>
             </div>
+          </div>
+          <div class="action-row">
+            <button class="ghost compact-button" type="button" data-settle-friend-id="${friend.id}">Record settlement</button>
           </div>
         </article>
       `).join('')
@@ -2326,6 +2759,95 @@ function selectedFriend() {
   return friends.find((friend) => friend.id === state.composer.friendId) || friends[0] || null;
 }
 
+function currentExpense() {
+  const expenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
+  if (!expenses.length) {
+    return null;
+  }
+  if (!state.selectedExpenseId || !expenses.some((expense) => expense.id === state.selectedExpenseId)) {
+    state.selectedExpenseId = expenses[0].id;
+  }
+  return expenses.find((expense) => expense.id === state.selectedExpenseId) || expenses[0];
+}
+
+async function selectExpense(expenseId, navigate) {
+  state.selectedExpenseId = expenseId;
+  await loadExpenseComments(expenseId);
+  if (navigate) {
+    navigateToScreen('activity');
+    return;
+  }
+  renderCurrentScreen();
+}
+
+async function loadExpenseComments(expenseId) {
+  const response = await invokeOperation('getComments', { expense_id: expenseId }, { silent: true, preserveResult: true });
+  if (!state.dashboard.expenseComments) {
+    state.dashboard.expenseComments = {};
+  }
+  state.dashboard.expenseComments[String(expenseId)] = response ? response.data : [];
+  localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(state.dashboard));
+}
+
+function renderExpenseDetail() {
+  const expense = currentExpense();
+  if (!expense) {
+    elements.expenseDetailCard.innerHTML = '<p class="empty-copy">Select an expense from activity or a group to manage it here.</p>';
+    elements.expenseCommentList.innerHTML = '<p class="empty-copy">No comments to show yet.</p>';
+    return;
+  }
+  const group = groupName(expense.group_id);
+  const comments = state.dashboard.expenseComments && state.dashboard.expenseComments[String(expense.id)]
+    ? state.dashboard.expenseComments[String(expense.id)]
+    : [];
+  elements.expenseDetailCard.innerHTML = `
+    <strong>${escapeHtml(expense.description || 'Expense')}</strong>
+    <span class="muted-copy">${escapeHtml(group)} • ${escapeHtml(formatDateLabel(expense.date || expense.created_at))}</span>
+    <span class="muted-copy">${escapeHtml((expense.currency_code || defaultCurrencyCode()) + ' ' + formatMoney(expense.cost || '0'))}</span>
+    <span class="muted-copy">${escapeHtml(expense.details || 'No extra note')}</span>
+    <div class="inline-badges">
+      ${expense.repeats ? `<span class="mini-badge">Repeats ${escapeHtml(expense.repeat_interval || 'monthly')}</span>` : ''}
+      ${expense.email_reminder ? `<span class="mini-badge">Reminder ${escapeHtml(String(expense.email_reminder_in_advance || 0))}d</span>` : ''}
+      ${expense.payment ? '<span class="mini-badge">Payment</span>' : ''}
+    </div>
+  `;
+  elements.expenseCommentList.innerHTML = comments.length
+    ? comments.map((comment) => `
+        <article class="list-row">
+          <div class="row-main">
+            <div class="row-copy">
+              <strong>${escapeHtml(displayName(comment.user || {}))}</strong>
+              <p class="muted-copy">${escapeHtml(comment.content || '')}</p>
+            </div>
+            <span class="row-meta">${escapeHtml(formatDateLabel(comment.created_at))}</span>
+          </div>
+        </article>
+      `).join('')
+    : '<p class="empty-copy">No comments yet for this expense.</p>';
+}
+
+function populateComposerFromExpense(expense) {
+  const currentUser = state.dashboard.getCurrentUser;
+  const otherUser = Array.isArray(expense.users)
+    ? expense.users.find((item) => item.user_id !== currentUser.id)
+    : null;
+  elements.quickDescription.value = expense.description || '';
+  elements.quickCost.value = expense.cost || '';
+  elements.quickNoteInput.value = expense.details || '';
+  elements.quickRepeatInterval.value = expense.repeats ? (expense.repeat_interval || 'monthly') : 'never';
+  elements.quickEmailReminder.checked = Boolean(expense.email_reminder);
+  elements.quickReminderDays.value = expense.email_reminder && expense.email_reminder_in_advance >= 0
+    ? String(expense.email_reminder_in_advance)
+    : '';
+  state.composer.editingExpenseId = expense.id;
+  state.composer.noteVisible = Boolean(expense.details);
+  state.composer.date = (expense.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  state.composer.groupId = expense.group_id || 0;
+  if (otherUser) {
+    state.composer.friendId = otherUser.user_id;
+  }
+}
+
 function renderGroupComposer() {
   const friends = availableFriends();
   elements.createGroupMembers.innerHTML = friends.length
@@ -2366,6 +2888,7 @@ function buildActivityItems(notifications, expenses) {
     title: item.description || 'Expense',
     body: `${item.currency_code || defaultCurrencyCode()} ${formatMoney(item.cost || '0')} • ${groupName(item.group_id)}`,
     date: item.date || item.created_at,
+    expenseId: item.id,
   }));
   return [...notificationItems, ...expenseItems].sort((left, right) => new Date(right.date || 0) - new Date(left.date || 0));
 }
@@ -2452,6 +2975,8 @@ function resetWorkspaceCache() {
   state.dashboard = {};
   state.workspaceHydrated = false;
   state.groupViewId = null;
+  state.selectedExpenseId = null;
+  state.composer.editingExpenseId = null;
   state.composer.friendId = null;
   state.composer.groupId = 0;
   localStorage.removeItem(DASHBOARD_CACHE_KEY);

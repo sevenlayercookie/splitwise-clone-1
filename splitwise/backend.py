@@ -4,7 +4,7 @@ import secrets
 import hashlib
 import hmac
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from email.parser import BytesParser
 from email.policy import default
@@ -341,17 +341,36 @@ class SplitwiseBackendApp(object):
             category_id = self.state["categories"][0]["id"]
         category_id = self._parse_int(category_id, "category id")
 
+        repeats = self._parse_bool(params.get("repeats"), (existing or {}).get("repeats", False))
+        repeat_interval = params.get("repeat_interval")
+        if repeat_interval is None and existing is not None:
+            repeat_interval = existing.get("repeat_interval")
+        repeat_interval = self._normalize_repeat_interval(repeat_interval, repeats)
+        email_reminder = self._parse_bool(params.get("email_reminder"), (existing or {}).get("email_reminder", False))
+        email_reminder_in_advance = params.get("email_reminder_in_advance")
+        if email_reminder_in_advance in (None, ""):
+            email_reminder_in_advance = (existing or {}).get("email_reminder_in_advance", -1)
+        else:
+            email_reminder_in_advance = int(email_reminder_in_advance)
+        next_repeat = params.get("next_repeat")
+        if next_repeat in (None, ""):
+            next_repeat = self._next_repeat_value(
+                params.get("date") or (existing or {}).get("date") or self._now(),
+                repeat_interval,
+                existing=(existing or {}).get("next_repeat"),
+                repeats=repeats,
+            )
         expense = {
             "id": expense_id,
             "group_id": group_id,
             "friendship_id": None,
             "expense_bundle_id": None,
             "description": description,
-            "repeats": False,
-            "repeat_interval": "never",
-            "email_reminder": False,
-            "email_reminder_in_advance": -1,
-            "next_repeat": None,
+            "repeats": repeats,
+            "repeat_interval": repeat_interval,
+            "email_reminder": email_reminder,
+            "email_reminder_in_advance": email_reminder_in_advance,
+            "next_repeat": next_repeat,
             "details": params.get("details") if params.get("details") is not None else (existing or {}).get("details"),
             "payment": self._parse_bool(params.get("payment"), (existing or {}).get("payment", False)),
             "creation_method": None,
@@ -437,6 +456,10 @@ class SplitwiseBackendApp(object):
             "locale": "en",
             "date_format": "YYYY-MM-DD",
             "default_group_id": 0,
+            "pending_friend_requests": len([
+                item for item in self.state["friend_requests"].values()
+                if item["to_user_id"] == user_id and item["status"] == "pending"
+            ]),
         })
         return payload
 
@@ -590,6 +613,19 @@ class SplitwiseBackendApp(object):
                 continue
             currency = expense["currency_code"]
             totals[currency] += Decimal(user_map[user_id]["owed_share"]) - Decimal(user_map[user_id]["paid_share"])
+        for settlement in self.state["settlements"].values():
+            if settlement.get("group_id") not in (None, 0):
+                pass
+            if current_user_id not in (settlement["from_user_id"], settlement["to_user_id"]):
+                continue
+            if user_id not in (settlement["from_user_id"], settlement["to_user_id"]):
+                continue
+            currency = settlement["currency_code"]
+            amount = Decimal(settlement["amount"])
+            if settlement["from_user_id"] == user_id and settlement["to_user_id"] == current_user_id:
+                totals[currency] -= amount
+            elif settlement["to_user_id"] == user_id and settlement["from_user_id"] == current_user_id:
+                totals[currency] += amount
         if not totals:
             currency = self.state["currencies"][0]["currency_code"]
             return [{"currency_code": currency, "amount": self._money("0")}]
@@ -615,6 +651,13 @@ class SplitwiseBackendApp(object):
                 continue
             for share in expense["user_shares"]:
                 totals[share["user_id"]][expense["currency_code"]] += Decimal(share["paid_share"]) - Decimal(share["owed_share"])
+        for settlement in self.state["settlements"].values():
+            if settlement.get("group_id") != group_id:
+                continue
+            amount = Decimal(settlement["amount"])
+            currency = settlement["currency_code"]
+            totals[settlement["from_user_id"]][currency] += amount
+            totals[settlement["to_user_id"]][currency] -= amount
         response = {}
         for member_id in self._require_group(group_id)["member_ids"]:
             member_totals = totals.get(member_id)
@@ -624,11 +667,36 @@ class SplitwiseBackendApp(object):
         return response
 
     def _group_repayments(self, group_id):
-        repayments = []
-        for expense in self.state["expenses"].values():
-            if expense.get("deleted_at") or expense.get("group_id") != group_id:
+        balances = self._group_member_balances(group_id)
+        creditors = []
+        debtors = []
+        for member_id, member_balances in balances.items():
+            primary = member_balances[0] if member_balances else None
+            if not primary:
                 continue
-            repayments.extend(self._expense_payload(expense["id"])["repayments"])
+            amount = Decimal(primary["amount"])
+            if amount > 0:
+                creditors.append([member_id, amount, primary["currency_code"]])
+            elif amount < 0:
+                debtors.append([member_id, -amount, primary["currency_code"]])
+        repayments = []
+        for debtor_id, remaining, currency_code in debtors:
+            while remaining > 0 and creditors:
+                creditor_id, available, creditor_currency = creditors[0]
+                if creditor_currency != currency_code:
+                    creditors.pop(0)
+                    continue
+                amount = min(remaining, available)
+                repayments.append({
+                    "from": debtor_id,
+                    "to": creditor_id,
+                    "amount": self._money(amount),
+                    "currency_code": currency_code,
+                })
+                remaining -= amount
+                creditors[0][1] -= amount
+                if creditors[0][1] <= 0:
+                    creditors.pop(0)
         return repayments
 
     def _add_notification(self, content, source_type, source_id, current_user_id, visible_to_all=False):
@@ -688,6 +756,180 @@ class SplitwiseBackendApp(object):
         )
         return self._friend_payload(friend["id"], current_user_id)
 
+    def send_friend_request(self, current_user_id, email=None, user_id=None):
+        if user_id is None:
+            email = self._normalize_email(email)
+            friend = self._find_user_by_email(email)
+        else:
+            friend = self.state["users"].get(int(user_id))
+        if friend is None:
+            raise ValueError("No account exists for that friend")
+        if friend["id"] == current_user_id:
+            raise ValueError("You cannot add yourself as a friend")
+        if friend["id"] in self.state["friendships"].get(current_user_id, set()):
+            return {"status": "accepted", "friend": self._friend_payload(friend["id"], current_user_id)}
+        for request_id, request in self.state["friend_requests"].items():
+            if request["status"] != "pending":
+                continue
+            if request["from_user_id"] == current_user_id and request["to_user_id"] == friend["id"]:
+                return self._friend_request_payload(request_id, current_user_id)
+            if request["from_user_id"] == friend["id"] and request["to_user_id"] == current_user_id:
+                return self.respond_friend_request(current_user_id, request_id, accept=True)
+        request_id = self._next_id("friend_request")
+        self.state["friend_requests"][request_id] = {
+            "id": request_id,
+            "from_user_id": current_user_id,
+            "to_user_id": friend["id"],
+            "status": "pending",
+            "created_at": self._now(),
+            "responded_at": None,
+        }
+        self._add_notification(
+            "Friend request sent to %s" % friend["first_name"],
+            "friend",
+            friend["id"],
+            current_user_id,
+        )
+        return self._friend_request_payload(request_id, current_user_id)
+
+    def list_friend_requests(self, current_user_id):
+        incoming = []
+        outgoing = []
+        for request_id, request in sorted(self.state["friend_requests"].items(), reverse=True):
+            payload = self._friend_request_payload(request_id, current_user_id)
+            if request["to_user_id"] == current_user_id and request["status"] == "pending":
+                incoming.append(payload)
+            elif request["from_user_id"] == current_user_id and request["status"] == "pending":
+                outgoing.append(payload)
+        return {"incoming": incoming, "outgoing": outgoing}
+
+    def respond_friend_request(self, current_user_id, request_id, accept=True):
+        request = self.state["friend_requests"].get(int(request_id))
+        if request is None:
+            raise ValueError("Friend request not found")
+        if request["to_user_id"] != current_user_id:
+            raise ValueError("Only the recipient can respond to this friend request")
+        if request["status"] != "pending":
+            raise ValueError("This friend request has already been handled")
+        request["status"] = "accepted" if accept else "rejected"
+        request["responded_at"] = self._now()
+        requester = self._require_user(request["from_user_id"])
+        if accept:
+            self.state["friendships"].setdefault(request["from_user_id"], set()).add(current_user_id)
+            self.state["friendships"].setdefault(current_user_id, set()).add(request["from_user_id"])
+            self._add_notification(
+                "%s accepted your friend request" % self._require_user(current_user_id)["first_name"],
+                "friend",
+                current_user_id,
+                current_user_id,
+                visible_to_all=True,
+            )
+            return {
+                "status": "accepted",
+                "friend": self._friend_payload(request["from_user_id"], current_user_id),
+                "request": self._friend_request_payload(request_id, current_user_id),
+            }
+        self._add_notification(
+            "Friend request from %s declined" % requester["first_name"],
+            "friend",
+            requester["id"],
+            current_user_id,
+        )
+        return {"status": "rejected", "request": self._friend_request_payload(request_id, current_user_id)}
+
+    def update_account(self, current_user_id, first_name=None, last_name=None, email=None):
+        user = self._require_user(current_user_id)
+        normalized_email = self._normalize_email(email) if email is not None else None
+        if normalized_email and normalized_email != self._normalize_email(user.get("email")):
+            existing = self._find_user_by_email(normalized_email)
+            if existing and existing["id"] != current_user_id:
+                raise ValueError("An account with that email already exists")
+        if first_name is not None:
+            first_name = first_name.strip()
+            if not first_name:
+                raise ValueError("first_name is required")
+            user["first_name"] = first_name
+        if last_name is not None:
+            user["last_name"] = last_name.strip() or None
+        if email is not None:
+            if not normalized_email:
+                raise ValueError("email is required")
+            user["email"] = normalized_email
+        user["updated_at"] = self._now()
+        self._add_notification("Profile updated", "user", current_user_id, current_user_id)
+        return self._current_user_payload(current_user_id)
+
+    def update_password(self, current_user_id, current_password, new_password):
+        password_hash = self.state["password_hashes"].get(current_user_id)
+        if not password_hash or not self._verify_password(current_password, password_hash):
+            raise ValueError("Current password is incorrect")
+        self.state["password_hashes"][current_user_id] = self._hash_password(new_password)
+        self._add_notification("Password updated", "user", current_user_id, current_user_id)
+        return {"updated": True}
+
+    def update_group(self, current_user_id, group_id, name=None, whiteboard=None):
+        group = self._require_group(int(group_id))
+        if current_user_id not in group["member_ids"]:
+            raise ValueError("Only group members can update this group")
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("name is required")
+            group["name"] = name
+        if whiteboard is not None:
+            group["whiteboard"] = whiteboard.strip() or None
+        group["updated_at"] = self._now()
+        self._add_notification("Group '%s' updated" % group["name"], "group", group["id"], current_user_id)
+        return self._group_payload(group["id"], current_user_id)
+
+    def record_settlement(self, current_user_id, other_user_id, amount, group_id=None, note=None, date=None, from_user_id=None, to_user_id=None):
+        other_user_id = int(other_user_id)
+        self._require_user(other_user_id)
+        if from_user_id is None or to_user_id is None:
+            from_user_id = current_user_id
+            to_user_id = other_user_id
+        from_user_id = int(from_user_id)
+        to_user_id = int(to_user_id)
+        self._require_user(from_user_id)
+        self._require_user(to_user_id)
+        if current_user_id not in (from_user_id, to_user_id):
+            raise ValueError("You can only record settlements involving yourself")
+        if from_user_id == to_user_id:
+            raise ValueError("You cannot settle up with yourself")
+        amount = self._money(amount)
+        if Decimal(amount) <= 0:
+            raise ValueError("amount must be greater than zero")
+        settlement_id = self._next_id("settlement")
+        record = {
+            "id": settlement_id,
+            "from_user_id": from_user_id,
+            "to_user_id": to_user_id,
+            "amount": amount,
+            "currency_code": self.state["currencies"][0]["currency_code"],
+            "group_id": int(group_id) if group_id not in (None, "", 0, "0") else None,
+            "note": note.strip() if isinstance(note, str) and note.strip() else None,
+            "date": date or self._now(),
+            "created_at": self._now(),
+            "created_by": current_user_id,
+        }
+        if record["group_id"] is not None:
+            group = self._require_group(record["group_id"])
+            if from_user_id not in group["member_ids"] or to_user_id not in group["member_ids"]:
+                raise ValueError("Settlements inside a group must involve group members")
+        self.state["settlements"][settlement_id] = record
+        other_user = self._require_user(other_user_id)
+        self._add_notification(
+            "Settlement recorded with %s for %s %s" % (
+                other_user["first_name"],
+                record["currency_code"],
+                amount,
+            ),
+            "expense",
+            settlement_id,
+            current_user_id,
+        )
+        return dict(record)
+
     def _resolve_current_user_id(self, environ):
         raw_user_id = environ.get("HTTP_X_SPLITWISE_USER_ID")
         if raw_user_id:
@@ -710,6 +952,18 @@ class SplitwiseBackendApp(object):
 
     def _normalize_email(self, email):
         return (email or "").strip().lower()
+
+    def _friend_request_payload(self, request_id, current_user_id):
+        request = self.state["friend_requests"][request_id]
+        other_user_id = request["from_user_id"] if request["to_user_id"] == current_user_id else request["to_user_id"]
+        return {
+            "id": request["id"],
+            "status": request["status"],
+            "created_at": request["created_at"],
+            "responded_at": request["responded_at"],
+            "direction": "incoming" if request["to_user_id"] == current_user_id else "outgoing",
+            "user": self._user_payload(other_user_id),
+        }
 
     def _find_user_by_email(self, email):
         if not email:
@@ -856,6 +1110,42 @@ class SplitwiseBackendApp(object):
             return value
         return str(value).lower() in ("1", "true", "yes", "on")
 
+    def _normalize_repeat_interval(self, value, repeats):
+        interval = (value or "").strip().lower()
+        if not repeats:
+            return "never"
+        if interval not in ("daily", "weekly", "monthly", "yearly"):
+            return "monthly"
+        return interval
+
+    def _next_repeat_value(self, date_value, repeat_interval, existing=None, repeats=False):
+        if not repeats or repeat_interval == "never":
+            return None
+        if existing:
+            return existing
+        try:
+            base = datetime.fromisoformat(str(date_value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if repeat_interval == "daily":
+            target = base + timedelta(days=1)
+        elif repeat_interval == "weekly":
+            target = base + timedelta(days=7)
+        elif repeat_interval == "yearly":
+            try:
+                target = base.replace(year=base.year + 1)
+            except ValueError:
+                target = base + timedelta(days=365)
+        else:
+            month = base.month + 1
+            year = base.year
+            if month > 12:
+                month = 1
+                year += 1
+            day = min(base.day, 28)
+            target = base.replace(year=year, month=month, day=day)
+        return target.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     def _money(self, value):
         if isinstance(value, Decimal):
             amount = value
@@ -912,6 +1202,7 @@ def _default_state():
             2: {1},
             3: {1},
         },
+        "friend_requests": {},
         "groups": {
             0: {
                 "id": 0,
@@ -990,6 +1281,7 @@ def _default_state():
                 "visible_to_all": True,
             }
         ],
+        "settlements": {},
         "categories": [
             {"id": 18, "name": "General", "subcategories": []},
             {"id": 19, "name": "Food", "subcategories": [{"id": 1901, "name": "Groceries"}]},
@@ -999,7 +1291,7 @@ def _default_state():
             {"currency_code": "EUR", "unit": "€"},
         ],
         "oauth1_request_tokens": {},
-        "next_ids": {"user": 4, "group": 2, "expense": 2, "comment": 2, "notification": 2},
+        "next_ids": {"user": 4, "group": 2, "expense": 2, "comment": 2, "notification": 2, "friend_request": 1, "settlement": 1},
     }
     return state
 
