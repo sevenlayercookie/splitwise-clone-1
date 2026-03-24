@@ -155,6 +155,8 @@ class PwaAppTestCase(unittest.TestCase):
         self.assertIn('manifest.json', html)
         self.assertIn('Recent activity', html)
         self.assertIn('Friend balances', html)
+        self.assertIn('Paid by', html)
+        self.assertIn('Custom split', html)
         self.assertTrue(cookie)
 
         status, _, manifest, _ = self._request(app, 'GET', '/manifest.json', cookie=cookie)

@@ -110,6 +110,32 @@ INDEX_HTML = """<!doctype html>
                   <input id="quick-cost" name="quick_cost" inputmode="decimal" autocomplete="off" placeholder="0.00">
                 </label>
                 <button id="quick-split-button" class="split-pill" type="button">Paid by you and split equally</button>
+                <div class="composer-grid">
+                  <label>
+                    Paid by
+                    <select id="quick-paid-by" name="quick_paid_by">
+                      <option value="self">You</option>
+                      <option value="friend">Selected friend</option>
+                    </select>
+                  </label>
+                  <label>
+                    Split
+                    <select id="quick-split-mode" name="quick_split_mode">
+                      <option value="equal">Split equally</option>
+                      <option value="custom">Custom split</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="quick-custom-split-row" class="composer-grid hidden">
+                  <label>
+                    <span id="quick-your-share-label">Your share</span>
+                    <input id="quick-your-share" name="quick_your_share" inputmode="decimal" autocomplete="off" placeholder="0.00">
+                  </label>
+                  <label>
+                    <span id="quick-friend-share-label">Friend share</span>
+                    <input id="quick-friend-share" name="quick_friend_share" inputmode="decimal" autocomplete="off" placeholder="0.00">
+                  </label>
+                </div>
                 <label id="quick-note-row" class="note-row hidden">
                   Note
                   <textarea id="quick-note-input" name="quick_note" rows="3" placeholder="Add a note or receipt context"></textarea>
@@ -1525,6 +1551,8 @@ const state = {
     editingExpenseId: null,
     friendId: null,
     groupId: 0,
+    paidBy: 'self',
+    splitMode: 'equal',
     date: new Date().toISOString().slice(0, 10),
     noteVisible: false,
   },
@@ -1578,6 +1606,13 @@ function bindElements() {
   elements.quickDescription = document.getElementById('quick-description');
   elements.quickCost = document.getElementById('quick-cost');
   elements.quickSplitButton = document.getElementById('quick-split-button');
+  elements.quickPaidBy = document.getElementById('quick-paid-by');
+  elements.quickSplitMode = document.getElementById('quick-split-mode');
+  elements.quickCustomSplitRow = document.getElementById('quick-custom-split-row');
+  elements.quickYourShareLabel = document.getElementById('quick-your-share-label');
+  elements.quickFriendShareLabel = document.getElementById('quick-friend-share-label');
+  elements.quickYourShare = document.getElementById('quick-your-share');
+  elements.quickFriendShare = document.getElementById('quick-friend-share');
   elements.quickDateButton = document.getElementById('quick-date-button');
   elements.quickGroupButton = document.getElementById('quick-group-button');
   elements.quickReceiptButton = document.getElementById('quick-receipt-button');
@@ -1877,7 +1912,35 @@ function wireBaseInteractions() {
   });
 
   elements.quickSplitButton.addEventListener('click', () => {
-    showToast('Equal split is enabled', 'success');
+    state.composer.splitMode = state.composer.splitMode === 'equal' ? 'custom' : 'equal';
+    elements.quickSplitMode.value = state.composer.splitMode;
+    initializeCustomSplitValues(state.composer.splitMode === 'custom');
+    renderComposerState();
+    showToast(state.composer.splitMode === 'custom' ? 'Custom split enabled' : 'Equal split enabled', 'success');
+  });
+
+  elements.quickPaidBy.addEventListener('change', () => {
+    state.composer.paidBy = elements.quickPaidBy.value;
+    renderComposerState();
+  });
+
+  elements.quickSplitMode.addEventListener('change', () => {
+    state.composer.splitMode = elements.quickSplitMode.value;
+    initializeCustomSplitValues(state.composer.splitMode === 'custom');
+    renderComposerState();
+  });
+
+  elements.quickCost.addEventListener('input', () => {
+    initializeCustomSplitValues(false);
+    renderComposerState();
+  });
+
+  elements.quickYourShare.addEventListener('input', () => {
+    initializeCustomSplitValues(false);
+  });
+
+  elements.quickFriendShare.addEventListener('input', () => {
+    initializeCustomSplitValues(false);
   });
 
   elements.quickDateButton.addEventListener('click', () => {
@@ -2286,13 +2349,30 @@ async function saveQuickExpense() {
     return;
   }
 
-  const equalShare = splitAmount(cost, 2);
+  const totalCost = Number.parseFloat(cost);
+  if (!Number.isFinite(totalCost) || totalCost <= 0) {
+    showToast('Enter a valid amount greater than zero', 'error');
+    return;
+  }
+  let yourShare = splitAmount(cost, 2);
+  let friendShare = splitAmount(cost, 2);
+  if (state.composer.splitMode === 'custom') {
+    const customShares = resolveCustomShares(totalCost);
+    if (!customShares) {
+      showToast('Custom shares must add up to the full expense amount', 'error');
+      return;
+    }
+    yourShare = customShares.yourShare;
+    friendShare = customShares.friendShare;
+  }
+  const ownerPaid = state.composer.paidBy === 'friend' ? '0.00' : formatMoney(cost);
+  const friendPaid = state.composer.paidBy === 'friend' ? formatMoney(cost) : '0.00';
   const repeats = elements.quickRepeatInterval.value !== 'never';
   const expense = {
     description,
     cost,
     currency_code: defaultCurrencyCode(),
-    split_equally: true,
+    split_equally: state.composer.splitMode === 'equal',
     details: elements.quickNoteInput.value.trim() || undefined,
     date: `${state.composer.date}T12:00:00Z`,
     repeats,
@@ -2300,8 +2380,8 @@ async function saveQuickExpense() {
     email_reminder: elements.quickEmailReminder.checked,
     email_reminder_in_advance: elements.quickEmailReminder.checked ? Number(elements.quickReminderDays.value || 0) : -1,
     users: [
-      { id: owner.id, paid_share: formatMoney(cost), owed_share: equalShare },
-      { id: companion.id, paid_share: '0.00', owed_share: equalShare },
+      { id: owner.id, paid_share: ownerPaid, owed_share: yourShare },
+      { id: companion.id, paid_share: friendPaid, owed_share: friendShare },
     ],
   };
   if (state.composer.editingExpenseId) {
@@ -2328,10 +2408,16 @@ async function saveQuickExpense() {
   elements.quickDescription.value = '';
   elements.quickCost.value = '';
   elements.quickNoteInput.value = '';
+  elements.quickPaidBy.value = 'self';
+  elements.quickSplitMode.value = 'equal';
+  elements.quickYourShare.value = '';
+  elements.quickFriendShare.value = '';
   elements.quickRepeatInterval.value = 'never';
   elements.quickEmailReminder.checked = false;
   elements.quickReminderDays.value = '';
   state.composer.editingExpenseId = null;
+  state.composer.paidBy = 'self';
+  state.composer.splitMode = 'equal';
   state.composer.noteVisible = false;
   renderCurrentScreen();
 }
@@ -2451,15 +2537,30 @@ function renderChipPlaceholder(label) {
 function renderComposerState() {
   elements.quickNoteRow.classList.toggle('hidden', !state.composer.noteVisible);
   elements.quickReminderDaysRow.classList.toggle('hidden', !elements.quickEmailReminder.checked);
+  elements.quickCustomSplitRow.classList.toggle('hidden', state.composer.splitMode !== 'custom');
   const groups = availableGroups();
   const selectedGroup = groups.find((group) => group.id === state.composer.groupId);
   elements.quickGroupButton.textContent = selectedGroup ? selectedGroup.name : 'No group';
   const today = new Date().toISOString().slice(0, 10);
   elements.quickDateButton.textContent = state.composer.date === today ? 'Today' : state.composer.date;
   const friend = selectedFriend();
+  if (!friend && state.composer.paidBy === 'friend') {
+    state.composer.paidBy = 'self';
+  }
+  elements.quickPaidBy.value = state.composer.paidBy;
+  elements.quickSplitMode.value = state.composer.splitMode;
+  const payerLabel = state.composer.paidBy === 'friend' && friend ? friend.first_name : 'you';
   elements.quickSplitButton.textContent = friend
-    ? `Paid by you and split equally with ${friend.first_name}`
-    : 'Paid by you and split equally';
+    ? (state.composer.splitMode === 'custom'
+      ? `Paid by ${payerLabel} with custom shares`
+      : `Paid by ${payerLabel} and split equally with ${friend.first_name}`)
+    : (state.composer.splitMode === 'custom'
+      ? `Paid by ${payerLabel} with custom shares`
+      : `Paid by ${payerLabel} and split equally`);
+  elements.quickPaidBy.options[1].textContent = friend ? friend.first_name : 'Selected friend';
+  elements.quickYourShareLabel.textContent = 'Your share';
+  elements.quickFriendShareLabel.textContent = friend ? `${friend.first_name}'s share` : 'Friend share';
+  initializeCustomSplitValues(false);
   if (state.composer.editingExpenseId) {
     elements.quickExpenseSave.textContent = 'Update';
   } else {
@@ -2761,6 +2862,63 @@ function selectedFriend() {
   return friends.find((friend) => friend.id === state.composer.friendId) || friends[0] || null;
 }
 
+function initializeCustomSplitValues(force) {
+  if (state.composer.splitMode !== 'custom') {
+    return;
+  }
+  const total = Number.parseFloat(elements.quickCost.value || '0');
+  if (!Number.isFinite(total) || total <= 0) {
+    return;
+  }
+  const yourValue = elements.quickYourShare.value.trim();
+  const friendValue = elements.quickFriendShare.value.trim();
+  if (force || (!yourValue && !friendValue)) {
+    const equalShare = splitAmount(total, 2);
+    elements.quickYourShare.value = equalShare;
+    elements.quickFriendShare.value = equalShare;
+    return;
+  }
+  if (yourValue && !friendValue) {
+    const yourShare = Number.parseFloat(yourValue);
+    if (Number.isFinite(yourShare)) {
+      elements.quickFriendShare.value = formatMoney(Math.max(total - yourShare, 0));
+    }
+    return;
+  }
+  if (!yourValue && friendValue) {
+    const friendShare = Number.parseFloat(friendValue);
+    if (Number.isFinite(friendShare)) {
+      elements.quickYourShare.value = formatMoney(Math.max(total - friendShare, 0));
+    }
+  }
+}
+
+function resolveCustomShares(total) {
+  const yourInput = elements.quickYourShare.value.trim();
+  const friendInput = elements.quickFriendShare.value.trim();
+  let yourShare = yourInput ? Number.parseFloat(yourInput) : NaN;
+  let friendShare = friendInput ? Number.parseFloat(friendInput) : NaN;
+  if (!Number.isFinite(yourShare) && Number.isFinite(friendShare)) {
+    yourShare = total - friendShare;
+  }
+  if (Number.isFinite(yourShare) && !Number.isFinite(friendShare)) {
+    friendShare = total - yourShare;
+  }
+  if (!Number.isFinite(yourShare) || !Number.isFinite(friendShare)) {
+    return null;
+  }
+  if (yourShare < 0 || friendShare < 0) {
+    return null;
+  }
+  if (Math.abs((yourShare + friendShare) - total) > 0.01) {
+    return null;
+  }
+  return {
+    yourShare: formatMoney(yourShare),
+    friendShare: formatMoney(friendShare),
+  };
+}
+
 function currentExpense() {
   const expenses = Array.isArray(state.dashboard.getExpenses) ? state.dashboard.getExpenses : [];
   if (!expenses.length) {
@@ -2848,6 +3006,20 @@ function populateComposerFromExpense(expense) {
   if (otherUser) {
     state.composer.friendId = otherUser.user_id;
   }
+  const currentUserShare = Array.isArray(expense.users)
+    ? expense.users.find((item) => item.user_id === currentUser.id)
+    : null;
+  const otherUserShare = Array.isArray(expense.users)
+    ? expense.users.find((item) => item.user_id !== currentUser.id)
+    : null;
+  state.composer.paidBy = otherUserShare && Number(otherUserShare.paid_share || 0) > Number((currentUserShare && currentUserShare.paid_share) || 0)
+    ? 'friend'
+    : 'self';
+  state.composer.splitMode = expense.split_equally ? 'equal' : 'custom';
+  elements.quickPaidBy.value = state.composer.paidBy;
+  elements.quickSplitMode.value = state.composer.splitMode;
+  elements.quickYourShare.value = currentUserShare ? formatMoney(currentUserShare.owed_share || '0') : '';
+  elements.quickFriendShare.value = otherUserShare ? formatMoney(otherUserShare.owed_share || '0') : '';
 }
 
 function renderGroupComposer() {
@@ -2981,6 +3153,8 @@ function resetWorkspaceCache() {
   state.composer.editingExpenseId = null;
   state.composer.friendId = null;
   state.composer.groupId = 0;
+  state.composer.paidBy = 'self';
+  state.composer.splitMode = 'equal';
   localStorage.removeItem(DASHBOARD_CACHE_KEY);
 }
 
